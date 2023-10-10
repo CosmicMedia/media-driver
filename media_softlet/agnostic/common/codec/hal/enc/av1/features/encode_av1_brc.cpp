@@ -613,7 +613,7 @@ namespace encode
             uint32_t TargetBitRate                                     = m_basicFeature->m_frameWidth * m_basicFeature->m_frameHeight * 8 / 1000;
             m_basicFeature->m_av1SeqParams->ICQQualityFactor           = ICQFactorLookup[m_basicFeature->m_av1SeqParams->ICQQualityFactor];
 			m_basicFeature->m_av1SeqParams->TargetBitRate[0]           = TargetBitRate;
-			m_basicFeature->m_av1SeqParams->MinBitRate                 = 0
+			m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
             m_basicFeature->m_av1SeqParams->MaxBitRate                 = m_basicFeature->m_av1SeqParams->MaxBitRate * 1000;
             m_basicFeature->m_av1SeqParams->InitVBVBufferFullnessInBit = m_basicFeature->m_av1SeqParams->MaxBitRate;
             m_basicFeature->m_av1SeqParams->VBVBufferSizeInBit         = m_basicFeature->m_av1SeqParams->MaxBitRate;
