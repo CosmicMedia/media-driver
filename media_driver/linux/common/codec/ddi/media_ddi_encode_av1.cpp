@@ -991,7 +991,7 @@ VAStatus DdiEncodeAV1::ParseMiscParamRC(void *data)
     }
     else if (VA_RC_QVBR == m_encodeCtx->uiRCMethod)
     {   
-		seqParams->TargetBitRate[temporalId] = bitRate * vaEncMiscParamRC->target_percentage / 100; //VBR target bits;
+        seqParams->TargetBitRate[temporalId] = bitRate * vaEncMiscParamRC->target_percentage / 100; //VBR target bits;
         seqParams->MaxBitRate = bitRate;
         seqParams->MinBitRate = 0;
         seqParams->RateControlMethod = RATECONTROL_QVBR;

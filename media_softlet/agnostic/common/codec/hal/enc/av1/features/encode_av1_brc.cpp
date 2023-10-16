@@ -595,14 +595,12 @@ namespace encode
             
             uint32_t TargetBitRate                                     = m_basicFeature->m_frameWidth * m_basicFeature->m_frameHeight * 8 / 1000;
             m_basicFeature->m_av1SeqParams->ICQQualityFactor           = ICQFactorLookup[m_basicFeature->m_av1SeqParams->ICQQualityFactor];
-            m_basicFeature->m_av1SeqParams->TargetBitRate[0]           = TargetBitRate;
-            m_basicFeature->m_av1SeqParams->MaxBitRate                 = (TargetBitRate << 4) / 10;
             m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
             m_basicFeature->m_av1SeqParams->InitVBVBufferFullnessInBit = 8000 * (TargetBitRate << 3) / 10;
             m_basicFeature->m_av1SeqParams->VBVBufferSizeInBit         = 8000 * (TargetBitRate << 1);
         }
-		else if (m_basicFeature->m_av1SeqParams->RateControlMethod == RATECONTROL_QVBR) 
-		{
+        else if (m_basicFeature->m_av1SeqParams->RateControlMethod == RATECONTROL_QVBR) 
+        {
             const uint8_t ICQFactorLookup[52] = { 
                 0,  1,  1,  1,  1,  2,  3,  4,  6,  7,  9,  11, 13, 16, 18, 23,
                 26, 30, 34, 39, 46, 52, 59, 68, 77, 87, 98, 104,112,120,127,134,
@@ -610,15 +608,15 @@ namespace encode
                 245,249,252,255 
             };
 
-            uint32_t TargetBitRate                                     = m_basicFeature->m_frameWidth * m_basicFeature->m_frameHeight * 8 / 1000;
+            // uint32_t TargetBitRate                                     = m_basicFeature->m_frameWidth * m_basicFeature->m_frameHeight * 8 / 1000;
             m_basicFeature->m_av1SeqParams->ICQQualityFactor           = ICQFactorLookup[m_basicFeature->m_av1SeqParams->ICQQualityFactor];
-			m_basicFeature->m_av1SeqParams->TargetBitRate[0]           = TargetBitRate;
-			m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
+            // m_basicFeature->m_av1SeqParams->TargetBitRate[0]           = TargetBitRate;
+            m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
             m_basicFeature->m_av1SeqParams->MaxBitRate                 = m_basicFeature->m_av1SeqParams->MaxBitRate * 1000;
             m_basicFeature->m_av1SeqParams->InitVBVBufferFullnessInBit = m_basicFeature->m_av1SeqParams->MaxBitRate;
             m_basicFeature->m_av1SeqParams->VBVBufferSizeInBit         = m_basicFeature->m_av1SeqParams->MaxBitRate;
 
-		}
+        }
         
         m_brcEnabled = IsRateControlBrc(m_basicFeature->m_av1SeqParams->RateControlMethod);
 
