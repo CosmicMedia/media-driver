@@ -400,8 +400,14 @@ namespace encode {
             secondLevelBatchBufferUsed->dwOffset = 0;
         }
 
-        HalOcaInterfaceNext::OnSubLevelBBStart(cmdBuffer, m_osInterface->pOsContext, &secondLevelBatchBufferUsed->OsResource, 0, true, 0);
         ENCODE_CHK_STATUS_RETURN(m_miItf->MHW_ADDCMD_F(MI_BATCH_BUFFER_START)(&cmdBuffer, secondLevelBatchBufferUsed));
+        HalOcaInterfaceNext::OnSubLevelBBStart(
+            cmdBuffer,
+            m_osInterface->pOsContext,
+            &secondLevelBatchBufferUsed->OsResource,
+            secondLevelBatchBufferUsed->dwOffset,
+            false,
+            MOS_ALIGN_CEIL(m_hwInterface->m_vdencBrcImgStateBufferSize, CODECHAL_CACHELINE_SIZE));
 
         CODECHAL_DEBUG_TOOL
         (
@@ -1561,6 +1567,13 @@ namespace encode {
             secondLevelBatchBuffer->dwOffset = MOS_ALIGN_CEIL(m_hwInterface->m_vdencBrcImgStateBufferSize, CODECHAL_CACHELINE_SIZE) +
                                                m_basicFeature->m_curNumSlices * brcFeature->GetVdencOneSliceStateSize();
             ENCODE_CHK_STATUS_RETURN(m_miItf->MHW_ADDCMD_F(MI_BATCH_BUFFER_START)(cmdBuffer, secondLevelBatchBuffer));
+            HalOcaInterfaceNext::OnSubLevelBBStart(
+                *cmdBuffer,
+                m_osInterface->pOsContext,
+                &secondLevelBatchBuffer->OsResource,
+                secondLevelBatchBuffer->dwOffset,
+                false,
+                brcFeature->GetVdencOneSliceStateSize());
         }
 
         ENCODE_CHK_STATUS_RETURN(AddAllCmds_MFX_PAK_INSERT_OBJECT(cmdBuffer));

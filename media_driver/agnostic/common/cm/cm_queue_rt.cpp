@@ -121,6 +121,13 @@ int32_t CmQueueRT::Destroy(CmQueueRT* &queue )
 
     queue->DestroyComputeGpuContext();
 
+    PCM_HAL_STATE cmHalState = ((PCM_CONTEXT_DATA)queue->m_device->GetAccelData())->cmHalState;
+    CM_CHK_NULL_RETURN_CMERROR(cmHalState);
+    if (cmHalState->pfnUnRegisterStream != nullptr && queue->m_streamIndex != cmHalState->osInterface->streamIndex)
+    {
+        cmHalState->pfnUnRegisterStream(queue->m_streamIndex, cmHalState);
+    }
+
     CmSafeDelete( queue );
 
     return result;
@@ -904,11 +911,6 @@ CM_RT_API int32_t CmQueueRT::EnqueueWithGroup( CmTask* task, CmEvent* & event, c
     }
 
     CmTaskRT *taskRT = static_cast<CmTaskRT *>(task);
-    if(taskRT == nullptr)
-    {
-        CM_ASSERTMESSAGE("Error: Kernel array is NULL.");
-        return CM_NULL_POINTER;
-    }
     uint32_t count = 0;
     count = taskRT->GetKernelCount();
 

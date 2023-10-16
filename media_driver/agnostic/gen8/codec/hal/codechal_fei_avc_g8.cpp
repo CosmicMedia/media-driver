@@ -6884,7 +6884,6 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::InitializeState()
     }
 
     bWeightedPredictionSupported = true;
-    m_brcHistoryBufferSize = m_brcHistoryBufferSize;
     dwBrcConstantSurfaceWidth = m_brcConstantSurfaceWidth;
     dwBrcConstantSurfaceHeight = m_brcConstantSurfaceHeight;
 
@@ -7191,6 +7190,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::SetCurbeAvcMbEnc(PCODECHAL_ENCODE_AVC_MBEN
         refWidth  = 64;
         refHeight = 32;
         lenSP     = 32;
+        break;
     case 8:
         // Exhaustive SUs 64x32 window
         refWidth  = 64;
@@ -7752,6 +7752,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::SetCurbeAvcPreProc(PCODECHAL_ENCODE_AVC_PR
         refWidth = 64;
         refHeight = 32;
         lenSP = 32;
+        break;
     case 8:
         // Exhaustive 48 SUs 64x32 window
         refWidth = 64;
