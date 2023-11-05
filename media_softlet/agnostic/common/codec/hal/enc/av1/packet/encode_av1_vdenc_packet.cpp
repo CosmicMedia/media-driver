@@ -1546,7 +1546,8 @@ namespace encode{
 
         uint32_t tileNum     = 0;
         auto     tileFeature = dynamic_cast<Av1EncodeTile *>(m_featureManager->GetFeature(Av1FeatureIDs::encodeTile));
-        tileFeature->GetTileNum(tileNum);
+        ENCODE_CHK_NULL_RETURN(tileFeature);
+        ENCODE_CHK_STATUS_RETURN(tileFeature->GetTileNum(tileNum));
 
         uint32_t      frameSubregionOffset = resourceOffset.dwMetaDataSize;
         MOS_RESOURCE *tileRecordBuffer     = nullptr;
@@ -1659,7 +1660,8 @@ namespace encode{
 
         uint32_t tileNum     = 0;
         auto     tileFeature = dynamic_cast<Av1EncodeTile *>(m_featureManager->GetFeature(Av1FeatureIDs::encodeTile));
-        tileFeature->GetTileNum(tileNum);
+        ENCODE_CHK_NULL_RETURN(tileFeature);
+        ENCODE_CHK_STATUS_RETURN(tileFeature->GetTileNum(tileNum));
         storeDataParams.dwResourceOffset = resourceOffset.dwWrittenSubregionsCount;
         storeDataParams.dwValue          = tileNum;  //frame subregion num
         ENCODE_CHK_STATUS_RETURN(m_miItf->MHW_ADDCMD_F(MI_STORE_DATA_IMM)(cmdBuffer));
