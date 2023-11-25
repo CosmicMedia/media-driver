@@ -31,6 +31,10 @@
 #include "media_blt_copy_next.h"
 #define BIT( n )                            ( 1 << (n) )
 
+#ifdef min
+#undef min
+#endif
+
 //!
 //! \brief    BltStateNext constructor
 //! \details  Initialize the BltStateNext members.
@@ -727,6 +731,18 @@ MOS_STATUS BltStateNext::SubmitCMD(
     BLT_CHK_STATUS_RETURN(m_osInterface->pfnRegisterBBCompleteNotifyEvent(
         m_osInterface,
         MOS_GPU_CONTEXT_BLT));
+
+    m_osInterface->pfnSyncOnResource(
+        m_osInterface,
+        pBltStateParam->pSrcSurface,
+        MOS_GPU_CONTEXT_BLT,
+        false);
+
+    m_osInterface->pfnSyncOnResource(
+        m_osInterface,
+        pBltStateParam->pDstSurface,
+        MOS_GPU_CONTEXT_BLT,
+        true);
 
     // Initialize the command buffer struct
     MOS_ZeroMemory(&cmdBuffer, sizeof(MOS_COMMAND_BUFFER));
