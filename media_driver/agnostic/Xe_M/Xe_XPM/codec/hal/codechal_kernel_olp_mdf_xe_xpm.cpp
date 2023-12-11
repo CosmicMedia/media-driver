@@ -183,6 +183,7 @@ MOS_STATUS CodechalKernelOlpMdf::Execute(PMOS_SURFACE src, uint16_t *srcMemory_o
     CODECHAL_ENCODE_CHK_STATUS_WITH_DESTROY_RETURN(m_cmQueue->EnqueueWithGroup(m_cmTask, event), delete_event);
     CODECHAL_ENCODE_CHK_STATUS_WITH_DESTROY_RETURN(m_cmTask->Reset(), delete_event);
 
+
     return MOS_STATUS_SUCCESS;
 }
 
