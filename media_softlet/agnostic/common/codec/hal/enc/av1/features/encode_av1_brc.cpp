@@ -603,7 +603,6 @@ namespace encode
             {
                 m_basicFeature->m_av1SeqParams->TargetBitRate[0]           = TargetBitRate;
                 m_basicFeature->m_av1SeqParams->MaxBitRate                 = (TargetBitRate << 4) / 10;
-                m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
             }
         }
         
