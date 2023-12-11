@@ -595,16 +595,16 @@ namespace encode
             
             uint32_t TargetBitRate                                     = m_basicFeature->m_frameWidth * m_basicFeature->m_frameHeight * 8 / 1000;
             m_basicFeature->m_av1SeqParams->ICQQualityFactor           = ICQFactorLookup[m_basicFeature->m_av1SeqParams->ICQQualityFactor];
-			m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
+            m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
             m_basicFeature->m_av1SeqParams->InitVBVBufferFullnessInBit = 8000 * (TargetBitRate << 3) / 10;
             m_basicFeature->m_av1SeqParams->VBVBufferSizeInBit         = 8000 * (TargetBitRate << 1);
 
-			if (m_basicFeature->m_av1SeqParams->RateControlMethod == RATECONTROL_CQL) 
-			{
-				m_basicFeature->m_av1SeqParams->TargetBitRate[0]           = TargetBitRate;
-				m_basicFeature->m_av1SeqParams->MaxBitRate                 = (TargetBitRate << 4) / 10;
-				m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
-			}
+            if (m_basicFeature->m_av1SeqParams->RateControlMethod == RATECONTROL_CQL) 
+            {
+                m_basicFeature->m_av1SeqParams->TargetBitRate[0]           = TargetBitRate;
+                m_basicFeature->m_av1SeqParams->MaxBitRate                 = (TargetBitRate << 4) / 10;
+                m_basicFeature->m_av1SeqParams->MinBitRate                 = 0;
+            }
         }
         
         m_brcEnabled = IsRateControlBrc(m_basicFeature->m_av1SeqParams->RateControlMethod);
