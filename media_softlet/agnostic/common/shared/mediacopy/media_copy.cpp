@@ -252,6 +252,7 @@ uint32_t GetMinRequiredSurfaceSizeInBytes(uint32_t pitch, uint32_t height, MOS_F
     case Format_P8:
     case Format_L8:
     case Format_A8:
+    case Format_Y16U:
         nBytes = pitch * height;
         break;
     default:
@@ -322,6 +323,22 @@ MOS_STATUS CheckResourceSizeValidForCopy(MOS_SURFACE &res, MCPY_ENGINE method)
     return MOS_STATUS_SUCCESS;
 }
 
+MOS_STATUS ValidateResource(MOS_SURFACE &src, MOS_SURFACE &dst, MCPY_ENGINE method)
+{
+    // For CP buffer copy, CP will handle the overflown size, skip size check
+    if (src.OsResource.pGmmResInfo->GetResourceType() == RESOURCE_BUFFER &&
+        dst.OsResource.pGmmResInfo->GetResourceType() == RESOURCE_BUFFER &&
+        method == MCPY_ENGINE_BLT)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
+    MCPY_CHK_STATUS_RETURN(CheckResourceSizeValidForCopy(src, method));
+    MCPY_CHK_STATUS_RETURN(CheckResourceSizeValidForCopy(dst, method));
+
+    return MOS_STATUS_SUCCESS;
+}
+
 //!
 //! \brief    surface copy func.
 //! \details  copy surface.
@@ -339,8 +356,10 @@ MOS_STATUS MediaCopyBaseState::SurfaceCopy(PMOS_RESOURCE src, PMOS_RESOURCE dst,
     MOS_SURFACE SrcResDetails, DstResDetails;
     MOS_ZeroMemory(&SrcResDetails, sizeof(MOS_SURFACE));
     MOS_ZeroMemory(&DstResDetails, sizeof(MOS_SURFACE));
-    SrcResDetails.Format = Format_Invalid;
-    DstResDetails.Format = Format_Invalid;
+    SrcResDetails.Format     = Format_Invalid;
+    SrcResDetails.OsResource = *src;
+    DstResDetails.Format     = Format_Invalid;
+    DstResDetails.OsResource = *dst;
 
     MCPY_STATE_PARAMS     mcpySrc = {nullptr, MOS_MMC_DISABLED, MOS_TILE_LINEAR, MCPY_CPMODE_CLEAR, false};
     MCPY_STATE_PARAMS     mcpyDst = {nullptr, MOS_MMC_DISABLED, MOS_TILE_LINEAR, MCPY_CPMODE_CLEAR, false};
@@ -395,8 +414,7 @@ MOS_STATUS MediaCopyBaseState::SurfaceCopy(PMOS_RESOURCE src, PMOS_RESOURCE dst,
 
     CopyEnigneSelect(preferMethod, mcpyEngine, mcpyEngineCaps);
 
-    MCPY_CHK_STATUS_RETURN(CheckResourceSizeValidForCopy(SrcResDetails, mcpyEngine));
-    MCPY_CHK_STATUS_RETURN(CheckResourceSizeValidForCopy(DstResDetails, mcpyEngine));
+    MCPY_CHK_STATUS_RETURN(ValidateResource(SrcResDetails, DstResDetails, mcpyEngine));
 
     MCPY_CHK_STATUS_RETURN(TaskDispatch(mcpySrc, mcpyDst, mcpyEngine));
 
@@ -533,3 +551,7 @@ MOS_STATUS MediaCopyBaseState::AuxCopy(PMOS_RESOURCE src, PMOS_RESOURCE dst)
     return MOS_STATUS_INVALID_HANDLE;
 }
 
+PMOS_INTERFACE MediaCopyBaseState::GetMosInterface()
+{
+    return m_osInterface;
+}

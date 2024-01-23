@@ -290,6 +290,7 @@ MOS_STATUS Policy::CreateHwFilter(SwFilterPipe &subSwFilterPipe, HwFilter *&pFil
     HW_FILTER_PARAMS param = {};
 
     MT_LOG(MT_VP_FEATURE_GRAPH_SETUPEXECUTESWFILTER_START, MT_NORMAL);
+    VP_PUBLIC_NORMALMESSAGE("Feature Graph: Setup ExecutePipe Start");
     MOS_STATUS status = GetHwFilterParam(subSwFilterPipe, param);
 
     if (MOS_FAILED(status))
@@ -310,6 +311,7 @@ MOS_STATUS Policy::CreateHwFilter(SwFilterPipe &subSwFilterPipe, HwFilter *&pFil
         return MOS_STATUS_UNIMPLEMENTED;
     }
     MT_LOG(MT_VP_FEATURE_GRAPH_SETUPEXECUTESWFILTER_END, MT_NORMAL);
+    VP_PUBLIC_NORMALMESSAGE("Feature Graph: Setup ExecutePipe End");
     return MOS_STATUS_SUCCESS;
 }
 
@@ -1966,6 +1968,7 @@ MOS_STATUS Policy::GetHdrExecutionCaps(SwFilter *feature)
             pHDREngine->bEnabled     = 1;
             pHDREngine->isolated     = 1;
             pHDREngine->RenderNeeded = 1;
+            pHDREngine->is1K1DLutSurfaceInUse = m_hwCaps.m_rules.is1K1DLutSurfaceInUse;
             hdrFilter->SetRenderTargetType(RenderTargetType::RenderTargetTypeParameter);
             VP_PUBLIC_NORMALMESSAGE("HDR_STAGE_3DLUT_KERNEL");
             // For next stage, will be updated during UpdateFeaturePipe.
@@ -1975,6 +1978,7 @@ MOS_STATUS Policy::GetHdrExecutionCaps(SwFilter *feature)
             hdrParams->stage         = HDR_STAGE_VEBOX_3DLUT_NO_UPDATE;
             pHDREngine->bEnabled     = 1;
             pHDREngine->VeboxNeeded  = 1;
+            pHDREngine->is1K1DLutSurfaceInUse = m_hwCaps.m_rules.is1K1DLutSurfaceInUse;
             hdrFilter->SetRenderTargetType(RenderTargetType::RenderTargetTypeSurface);
             if (hdrParams->formatOutput == Format_A8B8G8R8 || hdrParams->formatOutput == Format_A8R8G8B8)
             {
@@ -2278,7 +2282,7 @@ MOS_STATUS Policy::InitExecuteCaps(VP_EXECUTE_CAPS &caps, VP_EngineEntry &engine
         caps.bIECP = engineCaps.VeboxIECPNeeded;
         caps.bDiProcess2ndField = engineCaps.diProcess2ndField;
         caps.bTemperalInputInuse = engineCaps.bTemperalInputInuse;
-
+        caps.b1K1DLutInUse       = engineCaps.is1K1DLutSurfaceInUse;
         if (engineCaps.fcOnlyFeatureExists)
         {
             // For vebox/sfc+render case, use 2nd workload (render) to do csc for better performance
@@ -2331,6 +2335,7 @@ MOS_STATUS Policy::InitExecuteCaps(VP_EXECUTE_CAPS &caps, VP_EngineEntry &engine
 
         caps.bDiProcess2ndField = engineCaps.diProcess2ndField;
         caps.bTemperalInputInuse = engineCaps.bTemperalInputInuse;
+        caps.b1K1DLutInUse       = engineCaps.is1K1DLutSurfaceInUse;
     }
 
     VP_PUBLIC_NORMALMESSAGE("Execute Caps, value 0x%llx (bVebox %d, bSFC %d, bRender %d, bComposite %d, bOutputPipeFeatureInuse %d, bIECP %d, bForceCscToRender %d, bDiProcess2ndField %d)",

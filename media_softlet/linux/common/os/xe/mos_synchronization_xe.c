@@ -526,8 +526,9 @@ struct mos_xe_dep *mos_sync_get_dep_from_queue(int fd,
     }
     if(dep)
     {
-        //must set DRM_XE_SYNC_SIGNAL for fence out syncobj.
-        dep->sync.flags = DRM_XE_SYNC_SYNCOBJ | DRM_XE_SYNC_SIGNAL;
+        //must set DRM_XE_SYNC_FLAG_SIGNAL for fence out syncobj.
+        dep->sync.flags = DRM_XE_SYNC_FLAG_SIGNAL;
+        dep->sync.type = DRM_XE_SYNC_TYPE_SYNCOBJ;
         dep->status = STATUS_DEP_BUSY;
     }
     return dep;
@@ -766,7 +767,7 @@ bool mos_sync_is_valid_busy_dep(struct mos_xe_dep *dep,
  * @is_busy_dep is busy dep in this bo;
  * 
  * Note: all deps from bo dep map are used as fence in, in this case,
- *     we should never set DRM_XE_SYNC_SIGNAL for sync, otherwise kmd will
+ *     we should never set DRM_XE_SYNC_FLAG_SIGNAL for sync, otherwise kmd will
  *     not wait this sync.
  */
 void mos_sync_update_exec_syncs_by_dep(struct mos_xe_dep *dep,
@@ -780,7 +781,7 @@ void mos_sync_update_exec_syncs_by_dep(struct mos_xe_dep *dep,
     if (mos_sync_is_valid_busy_dep(dep, engine_id, engine_ids, bo_exec_timeline))
     {
         is_busy_dep = true;
-        dep->sync.flags = DRM_XE_SYNC_SYNCOBJ;
+        dep->sync.type = DRM_XE_SYNC_TYPE_SYNCOBJ;
         syncs.push_back(dep->sync);
         atomic_inc(&dep->ref_count);
         used_deps.push_back(dep);
@@ -799,7 +800,7 @@ void mos_sync_update_exec_syncs_by_dep(struct mos_xe_dep *dep,
  * @syncs indicates to exec syncs array for current exec.
  *
  * Note: all deps from bo dep map are used as fence in, in this case,
- *     we should never set DRM_XE_SYNC_SIGNAL for sync, otherwise kmd will
+ *     we should never set DRM_XE_SYNC_FLAG_SIGNAL for sync, otherwise kmd will
  *     not wait this sync.
  *
  * @return indicates to update status.
@@ -821,7 +822,7 @@ int mos_sync_update_exec_syncs_from_timeline_deps(uint32_t curr_engine,
                 drm_xe_sync sync;
                 memclear(sync);
                 sync.handle = write_deps[lst_write_engine].dep->sync.handle;
-                sync.flags = DRM_XE_SYNC_TIMELINE_SYNCOBJ;
+                sync.type = DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ;
                 sync.timeline_value = write_deps[lst_write_engine].exec_timeline_index;
                 syncs.push_back(sync);
             }
@@ -843,7 +844,7 @@ int mos_sync_update_exec_syncs_from_timeline_deps(uint32_t curr_engine,
                     drm_xe_sync sync;
                     memclear(sync);
                     sync.handle = it->second.dep->sync.handle;
-                    sync.flags = DRM_XE_SYNC_TIMELINE_SYNCOBJ;
+                    sync.type = DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ;
                     sync.timeline_value = it->second.exec_timeline_index;
                     syncs.push_back(sync);
                 }
@@ -868,7 +869,7 @@ int mos_sync_update_exec_syncs_from_timeline_deps(uint32_t curr_engine,
  * @syncs indicates to exec syncs array for current exec.
  *
  * Note: all deps from bo dep map are used as fence in, in this case,
- *     we should never set DRM_XE_SYNC_SIGNAL for sync, otherwise kmd will
+ *     we should never set DRM_XE_SYNC_FLAG_SIGNAL for sync, otherwise kmd will
  *     not wait this sync.
  *
  * @return indicates to update status.
@@ -969,7 +970,7 @@ int mos_sync_update_exec_syncs_from_handle(int fd,
 
     struct drm_xe_sync sync;
     memclear(sync);
-    sync.flags = DRM_XE_SYNC_SYNCOBJ;
+    sync.type = DRM_XE_SYNC_TYPE_SYNCOBJ;
     sync.handle = syncobj_handle;
     syncs.push_back(sync);
 
@@ -998,10 +999,11 @@ struct mos_xe_dep *mos_sync_update_exec_syncs_from_timeline_queue(int fd,
     {
         drm_xe_sync sync;
         memclear(sync);
-        //must set DRM_XE_SYNC_SIGNAL for timeline fence out syncobj.
+        //must set DRM_XE_SYNC_FLAG_SIGNAL for timeline fence out syncobj.
         sync.handle = dep->sync.handle;
         sync.timeline_value = dep->timeline_index;
-        sync.flags = DRM_XE_SYNC_TIMELINE_SYNCOBJ | DRM_XE_SYNC_SIGNAL;
+        sync.flags = DRM_XE_SYNC_FLAG_SIGNAL;
+        sync.type = DRM_XE_SYNC_TYPE_TIMELINE_SYNCOBJ;
         syncs.push_back(sync);
     }
 

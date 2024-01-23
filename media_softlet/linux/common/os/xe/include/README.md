@@ -13,14 +13,16 @@ $ make headers_install INSTALL_HDR_PATH=/path/to/install
 
 The last update was done at the following kernel commit:
 
-commit 4354e27efb78582ee567ba6264c79d0872a3a4e7 (HEAD -> drm-xe-next, origin/drm-xe-next)
-Author: Brian Welty <brian.welty@intel.com>
-Date:   Tue Sep 26 13:59:37 2023 -0700
+commit 0f1d88f2786458a8986920669bd8fb3fec6e618d (HEAD -> drm-xe-next, origin/drm-xe-next)
+drm/xe/uapi: Kill exec_queue_set_property
 
-    drm/xe: Simplify xe_res_get_buddy()
+All the properties should be immutable and set upon exec_queue creation
+using the existent extension. So, let's kill this useless and dangerous
+uapi.
 
-    We can remove the unnecessary indirection thru xe->tiles[] to get
-    the TTM VRAM manager.  This code can be common for VRAM and STOLEN.
-
-    Signed-off-by: Brian Welty <brian.welty@intel.com>
-    Reviewed-by: Matthew Brost <matthew.brost@intel.com>
+Cc: Francois Dugast <francois.dugast@intel.com>
+Cc: José Roberto de Souza <jose.souza@intel.com>
+Cc: Matthew Brost <matthew.brost@intel.com>
+Signed-off-by: default avatarRodrigo Vivi <rodrigo.vivi@intel.com>
+Reviewed-by: default avatarJosé Roberto de Souza <jose.souza@intel.com>
+Signed-off-by: default avatarFrancois Dugast <francois.dugast@intel.com>

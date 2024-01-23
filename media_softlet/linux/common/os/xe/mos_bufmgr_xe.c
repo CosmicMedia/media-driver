@@ -91,8 +91,8 @@ typedef struct MOS_OCA_EXEC_LIST_INFO mos_oca_exec_list_info;
 //mos_xe_mem_class currently used as index of default_alignment
 enum mos_xe_mem_class
 {
-    MOS_XE_MEM_CLASS_SYSMEM = 0,     //For XE_MEM_REGION_CLASS_SYSMEM
-    MOS_XE_MEM_CLASS_VRAM,           //For XE_MEM_REGION_CLASS_VRAM
+    MOS_XE_MEM_CLASS_SYSMEM = 0,     //For DRM_XE_MEM_REGION_CLASS_SYSMEM
+    MOS_XE_MEM_CLASS_VRAM,           //For DRM_XE_MEM_REGION_CLASS_VRAM
     MOS_XE_MEM_CLASS_MAX
 };
 
@@ -198,11 +198,9 @@ typedef struct mos_xe_bufmgr_gem {
     uint32_t *hw_config;
     uint32_t config_len;
     struct drm_xe_query_config *config;
-    struct drm_xe_engine_class_instance *hw_engines;
-    uint32_t number_hw_engines;
-    struct drm_xe_query_mem_usage *mem_usage;
+    struct drm_xe_query_engines *engines;
+    struct drm_xe_query_mem_regions *mem_regions;
     struct drm_xe_query_gt_list *gt_list;
-    uint32_t number_gt;
     /** bitmask of all memory regions */
     uint64_t memory_regions;
     /** @default_alignment: safe alignment regardless region location */
@@ -300,6 +298,60 @@ typedef struct mos_xe_bo_gem {
      * Boolean of whether this buffer is imported from external
      */
     bool is_imported;
+    /**
+     * @cpu_caching: The CPU caching mode to select for this object. If
+     * mmaping the object the mode selected here will also be used.
+     *
+     * Supported values:
+     *
+     * DRM_XE_GEM_CPU_CACHING_WB: Allocate the pages with write-back
+     * caching.  On iGPU this can't be used for scanout surfaces. Currently
+     * not allowed for objects placed in VRAM.
+     *
+     * DRM_XE_GEM_CPU_CACHING_WC: Allocate the pages as write-combined. This
+     * is uncached. Scanout surfaces should likely use this. All objects
+     * that can be placed in VRAM must use this.
+     */
+    uint16_t cpu_caching;
+
+    /**
+     * @pat_index: The platform defined @pat_index to use for this mapping.
+     * The index basically maps to some predefined memory attributes,
+     * including things like caching, coherency, compression etc.  The exact
+     * meaning of the pat_index is platform specific. When the KMD sets up
+     * the binding the index here is encoded into the ppGTT PTE.
+     *
+     * For coherency the @pat_index needs to be at least 1way coherent when
+     * drm_xe_gem_create.cpu_caching is DRM_XE_GEM_CPU_CACHING_WB. The KMD
+     * will extract the coherency mode from the @pat_index and reject if
+     * there is a mismatch (see note below for pre-MTL platforms).
+     *
+     * Note: On pre-MTL platforms there is only a caching mode and no
+     * explicit coherency mode, but on such hardware there is always a
+     * shared-LLC (or is dgpu) so all GT memory accesses are coherent with
+     * CPU caches even with the caching mode set as uncached.  It's only the
+     * display engine that is incoherent (on dgpu it must be in VRAM which
+     * is always mapped as WC on the CPU). However to keep the uapi somewhat
+     * consistent with newer platforms the KMD groups the different cache
+     * levels into the following coherency buckets on all pre-MTL platforms:
+     *
+     *  ppGTT UC -> COH_NONE
+     *  ppGTT WC -> COH_NONE
+     *  ppGTT WT -> COH_NONE
+     *  ppGTT WB -> COH_AT_LEAST_1WAY
+     *
+     * In practice UC/WC/WT should only ever used for scanout surfaces on
+     * such platforms (or perhaps in general for dma-buf if shared with
+     * another device) since it is only the display engine that is actually
+     * incoherent.  Everything else should typically use WB given that we
+     * have a shared-LLC.  On MTL+ this completely changes and the HW
+     * defines the coherency mode as part of the @pat_index, where
+     * incoherent GT access is possible.
+     *
+     * Note: For userptr and externally imported dma-buf the kernel expects
+     * either 1WAY or 2WAY for the @pat_index.
+     */
+    uint16_t pat_index;
 
     /**
      * Boolean of whether this buffer is exported to external
@@ -401,8 +453,8 @@ static uint32_t __mos_query_memory_regions_xe(int fd)
     if(gt_list)
     {
         for (int i = 0; i < gt_list->num_gt; i++) {
-            __memory_regions |= gt_list->gt_list[i].native_mem_regions |
-                gt_list->gt_list[i].slow_mem_regions;
+            __memory_regions |= gt_list->gt_list[i].near_mem_regions |
+                gt_list->gt_list[i].far_mem_regions;
         }
 
         if (!bufmgr_gem)
@@ -424,14 +476,14 @@ static uint32_t __mos_query_memory_regions_xe(int fd)
 }
 
 
-static struct drm_xe_query_mem_usage *
-__mos_query_mem_usage_xe(int fd)
+static struct drm_xe_query_mem_regions *
+__mos_query_mem_regions_xe(int fd)
 {
     int ret = 0;
-    struct drm_xe_query_mem_usage *mem_usage;
+    struct drm_xe_query_mem_regions *mem_regions;
     struct drm_xe_device_query query;
     memclear(query);
-    query.query = DRM_XE_DEVICE_QUERY_MEM_USAGE;
+    query.query = DRM_XE_DEVICE_QUERY_MEM_REGIONS;
 
     ret = drmIoctl(fd, DRM_IOCTL_XE_DEVICE_QUERY,
                 &query);
@@ -440,51 +492,51 @@ __mos_query_mem_usage_xe(int fd)
         return nullptr;
     }
 
-    mem_usage = (drm_xe_query_mem_usage *)malloc(query.size);
-    if (mem_usage != nullptr)
+    mem_regions = (drm_xe_query_mem_regions *)malloc(query.size);
+    if (mem_regions != nullptr)
     {
-        memset(mem_usage, 0, query.size);
+        memset(mem_regions, 0, query.size);
     }
     else
     {
-        MOS_DRM_ASSERTMESSAGE("malloc mem_usage failed");
+        MOS_DRM_ASSERTMESSAGE("malloc mem_regions failed");
         return nullptr;
     }
 
-    query.data = (uintptr_t)(mem_usage);
+    query.data = (uintptr_t)(mem_regions);
     ret = drmIoctl(fd, DRM_IOCTL_XE_DEVICE_QUERY,
                 &query);
-    if (ret || !query.size || 0 == mem_usage->num_regions)
+    if (ret || !query.size || 0 == mem_regions->num_mem_regions)
     {
-        MOS_XE_SAFE_FREE(mem_usage);
+        MOS_XE_SAFE_FREE(mem_regions);
         return nullptr;
     }
 
-    return mem_usage;
+    return mem_regions;
 }
 
 uint8_t __mos_query_vram_region_count_xe(int fd)
 {
-    struct drm_xe_query_mem_usage *mem_usage;
+    struct drm_xe_query_mem_regions *mem_regions;
     uint8_t num_regions = 0;
     uint8_t vram_regions = 0;
     struct mos_xe_bufmgr_gem *bufmgr_gem = mos_bufmgr_gem_find(fd);
 
-    if (bufmgr_gem && bufmgr_gem->mem_usage)
+    if (bufmgr_gem && bufmgr_gem->mem_regions)
     {
-        mem_usage = bufmgr_gem->mem_usage;
+        mem_regions = bufmgr_gem->mem_regions;
     }
     else
     {
-        mem_usage = __mos_query_mem_usage_xe(fd);
+        mem_regions = __mos_query_mem_regions_xe(fd);
     }
 
-    if(mem_usage)
+    if(mem_regions)
     {
-        num_regions = mem_usage->num_regions;
+        num_regions = mem_regions->num_mem_regions;
         for(int i =0; i < num_regions; i++)
         {
-            if(mem_usage->regions[i].mem_class == XE_MEM_REGION_CLASS_VRAM)
+            if(mem_regions->mem_regions[i].mem_class == DRM_XE_MEM_REGION_CLASS_VRAM)
             {
                 vram_regions++;
             }
@@ -492,11 +544,11 @@ uint8_t __mos_query_vram_region_count_xe(int fd)
 
         if (!bufmgr_gem)
         {
-            MOS_XE_SAFE_FREE(mem_usage)
+            MOS_XE_SAFE_FREE(mem_regions)
         }
-        else if (bufmgr_gem && !bufmgr_gem->mem_usage)
+        else if (bufmgr_gem && !bufmgr_gem->mem_regions)
         {
-            bufmgr_gem->mem_usage = mem_usage;
+            bufmgr_gem->mem_regions = mem_regions;
         }
     }
 
@@ -598,20 +650,20 @@ __mos_query_gt_list_xe(int fd)
 }
 
 static int
-__mos_get_default_alignment_xe(struct mos_bufmgr *bufmgr, struct drm_xe_query_mem_usage *mem_usage)
+__mos_get_default_alignment_xe(struct mos_bufmgr *bufmgr, struct drm_xe_query_mem_regions *mem_regions)
 {
     MOS_DRM_CHK_NULL_RETURN_VALUE(bufmgr, -EINVAL);
-    MOS_DRM_CHK_NULL_RETURN_VALUE(mem_usage, -EINVAL);
+    MOS_DRM_CHK_NULL_RETURN_VALUE(mem_regions, -EINVAL);
     struct mos_xe_bufmgr_gem *bufmgr_gem = (struct mos_xe_bufmgr_gem *)bufmgr;
     uint16_t mem_class;
 
-    for (int i = 0; i < mem_usage->num_regions; i++)
+    for (int i = 0; i < mem_regions->num_mem_regions; i++)
     {
-        if (XE_MEM_REGION_CLASS_SYSMEM == mem_usage->regions[i].mem_class)
+        if (DRM_XE_MEM_REGION_CLASS_SYSMEM == mem_regions->mem_regions[i].mem_class)
         {
             mem_class = MOS_XE_MEM_CLASS_SYSMEM;
         }
-        else if (XE_MEM_REGION_CLASS_VRAM == mem_usage->regions[i].mem_class)
+        else if (DRM_XE_MEM_REGION_CLASS_VRAM == mem_regions->mem_regions[i].mem_class)
         {
             mem_class = MOS_XE_MEM_CLASS_VRAM;
         }
@@ -621,9 +673,9 @@ __mos_get_default_alignment_xe(struct mos_bufmgr *bufmgr, struct drm_xe_query_me
             return -EINVAL;
         }
 
-        if (bufmgr_gem->default_alignment[mem_class] < mem_usage->regions[i].min_page_size)
+        if (bufmgr_gem->default_alignment[mem_class] < mem_regions->mem_regions[i].min_page_size)
         {
-            bufmgr_gem->default_alignment[mem_class] = mem_usage->regions[i].min_page_size;
+            bufmgr_gem->default_alignment[mem_class] = mem_regions->mem_regions[i].min_page_size;
         }
     }
 
@@ -704,7 +756,7 @@ __mos_vm_create_xe(struct mos_bufmgr *bufmgr)
     int ret;
 
     memclear(vm);
-    vm.flags = DRM_XE_VM_CREATE_ASYNC_DEFAULT;
+    vm.flags = DRM_XE_VM_CREATE_FLAG_ASYNC_DEFAULT;
     ret = drmIoctl(bufmgr_gem->fd, DRM_IOCTL_XE_VM_CREATE, &vm);
     if (ret != 0) {
         MOS_DRM_ASSERTMESSAGE("DRM_IOCTL_XE_VM_CREATE failed: %s",
@@ -764,33 +816,6 @@ mos_vm_destroy_xe(struct mos_bufmgr *bufmgr, uint32_t vm_id)
     }
 }
 
-/**
- * Set the property of the ctx
- *
- * @ctx indicates to the context that to set
- * @property indicates to what property that to set
- * @value indicates to value for given property
- */
-static int
-__mos_set_context_property(struct mos_bufmgr *bufmgr,
-            struct mos_linux_context *ctx,
-            uint32_t property,
-            uint64_t value)
-{
-    MOS_DRM_CHK_NULL_RETURN_VALUE(bufmgr, -EINVAL);
-    MOS_DRM_CHK_NULL_RETURN_VALUE(ctx, -EINVAL);
-    struct mos_xe_bufmgr_gem *bufmgr_gem = (struct mos_xe_bufmgr_gem *)bufmgr;
-    struct drm_xe_exec_queue_set_property p;
-    memclear(p);
-    p.property = property;
-    p.exec_queue_id = ctx->ctx_id;
-    p.value = value;
-
-    int ret = drmIoctl(bufmgr_gem->fd, DRM_IOCTL_XE_EXEC_QUEUE_SET_PROPERTY, &p);
-
-    return ret;
-}
-
 static struct mos_linux_context *
 mos_context_create_shared_xe(
                             struct mos_bufmgr *bufmgr,
@@ -841,12 +866,12 @@ mos_context_create_shared_xe(
     {
         struct drm_xe_ext_set_property timeslice;
         memclear(timeslice);
-        timeslice.property = XE_EXEC_QUEUE_SET_PROPERTY_TIMESLICE;
+        timeslice.property = DRM_XE_EXEC_QUEUE_SET_PROPERTY_TIMESLICE;
         /**
          * Note, this value indicates to maximum of time slice for WL instead of real waiting time.
          */
         timeslice.value = bufmgr_gem->exec_queue_timeslice;
-        timeslice.base.name = XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY;
+        timeslice.base.name = DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY;
         create.extensions = (uintptr_t)(&timeslice);
         MOS_DRM_NORMALMESSAGE("WA: exec_queue timeslice set by engine class(%d), value(%d)",
                     engine_class, bufmgr_gem->exec_queue_timeslice);
@@ -1113,9 +1138,8 @@ __mos_bo_set_offset_xe(MOS_LINUX_BO *bo)
 }
 
 static int __mos_vm_bind_xe(int fd, uint32_t vm_id, uint32_t exec_queue_id, uint32_t bo_handle,
-          uint64_t offset, uint64_t addr, uint64_t size, uint32_t op, uint32_t flags,
-          struct drm_xe_sync *sync, uint32_t num_syncs, uint32_t region,
-          uint64_t ext)
+          uint64_t offset, uint64_t addr, uint64_t size, uint16_t pat_index, uint32_t op, uint32_t flags,
+          struct drm_xe_sync *sync, uint32_t num_syncs, uint64_t ext)
 {
     int ret;
 
@@ -1128,10 +1152,10 @@ static int __mos_vm_bind_xe(int fd, uint32_t vm_id, uint32_t exec_queue_id, uint
     bind.bind.obj = bo_handle;
     bind.bind.obj_offset = offset;
     bind.bind.range = size;
+    bind.bind.pat_index = pat_index;
     bind.bind.addr = addr;
     bind.bind.op = op;
     bind.bind.flags = flags;
-    bind.bind.region = region;
     bind.num_syncs = num_syncs;
     bind.syncs = (uintptr_t)sync;
 
@@ -1146,7 +1170,7 @@ static int __mos_vm_bind_xe(int fd, uint32_t vm_id, uint32_t exec_queue_id, uint
 }
 
 static int mos_xe_vm_bind_sync(int fd, uint32_t vm_id, uint32_t bo, uint64_t offset,
-        uint64_t addr, uint64_t size, uint32_t op, bool is_defer)
+        uint64_t addr, uint64_t size, uint16_t pat_index, uint32_t op, bool is_defer)
 {
     if (is_defer)
     {
@@ -1155,11 +1179,12 @@ static int mos_xe_vm_bind_sync(int fd, uint32_t vm_id, uint32_t bo, uint64_t off
     struct drm_xe_sync sync;
 
     memclear(sync);
-    sync.flags = DRM_XE_SYNC_SYNCOBJ | DRM_XE_SYNC_SIGNAL;
+    sync.flags = DRM_XE_SYNC_FLAG_SIGNAL;
+    sync.type = DRM_XE_SYNC_TYPE_SYNCOBJ;
     sync.handle = mos_sync_syncobj_create(fd, 0);
 
-    int ret = __mos_vm_bind_xe(fd, vm_id, 0, bo, offset, addr, size,
-                op, XE_VM_BIND_FLAG_ASYNC, &sync, 1, 0, 0);
+    int ret = __mos_vm_bind_xe(fd, vm_id, 0, bo, offset, addr, size, pat_index,
+                op, DRM_XE_VM_BIND_FLAG_ASYNC, &sync, 1,  0);
 
     if (ret)
     {
@@ -1180,11 +1205,11 @@ static int mos_xe_vm_bind_sync(int fd, uint32_t vm_id, uint32_t bo, uint64_t off
 }
 
 static int mos_xe_vm_bind_async(int fd, uint32_t vm_id, uint32_t bo, uint64_t offset,
-        uint64_t addr, uint64_t size, uint32_t op,
+        uint64_t addr, uint64_t size, uint16_t pat_index, uint32_t op,
         struct drm_xe_sync *sync, uint32_t num_syncs)
 {
-    return __mos_vm_bind_xe(fd, vm_id, 0, bo, offset, addr, size,
-                op, XE_VM_BIND_FLAG_ASYNC, sync, num_syncs, 0, 0);
+    return __mos_vm_bind_xe(fd, vm_id, 0, bo, offset, addr, size, pat_index,
+                op, DRM_XE_VM_BIND_FLAG_ASYNC, sync, num_syncs,    0);
 }
 
 drm_export struct mos_linux_bo *
@@ -1214,6 +1239,15 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
     bo_gem->mem_region = MEMZONE_SYS;
     bo_align = MAX(alloc->alignment, bufmgr_gem->default_alignment[MOS_XE_MEM_CLASS_SYSMEM]);
 
+    if (alloc->ext.cpu_cacheable)
+    {
+        /**
+         * It is not allowed for vram bo with WB setting
+         */
+        alloc->ext.cpu_cacheable = false;
+        alloc->ext.pat_index = 13; // Note: hard code here with a default pat index temporarily(WC, uncached)
+    }
+
     if(bufmgr_gem->has_vram &&
             (MOS_MEMPOOL_VIDEOMEMORY == alloc->ext.mem_type   || MOS_MEMPOOL_DEVICEMEMORY == alloc->ext.mem_type))
     {
@@ -1225,11 +1259,11 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
     if (MEMZONE_DEVICE == bo_gem->mem_region)
     {
         //Note: memory_region is related to gt_id for multi-tiles gpu, take gt_id into consideration in case of multi-tiles
-        create.flags = bufmgr_gem->memory_regions    & (~0x1);
+        create.placement = bufmgr_gem->memory_regions    & (~0x1);
     }
     else
     {
-        create.flags = bufmgr_gem->memory_regions    & 0x1;
+        create.placement = bufmgr_gem->memory_regions    & 0x1;
     }
 
     //Note: We suggest vm_id=0 here as default, otherwise this bo cannot be exported as prelim fd.
@@ -1237,8 +1271,14 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
     create.size = ALIGN(alloc->size, bo_align);
     if (bufmgr_gem->is_defer_creation_and_binding)
     {
-        create.flags |= XE_GEM_CREATE_FLAG_DEFER_BACKING;
+        create.flags |= DRM_XE_GEM_CREATE_FLAG_DEFER_BACKING;
     }
+
+    /**
+     * Note: current, it only supports WB/ WC while UC and other cache are not allowed.
+     */
+    create.cpu_caching = alloc->ext.cpu_cacheable ? DRM_XE_GEM_CPU_CACHING_WB : DRM_XE_GEM_CPU_CACHING_WC;
+
     ret = drmIoctl(bufmgr_gem->fd,
         DRM_IOCTL_XE_GEM_CREATE,
         &create);
@@ -1274,7 +1314,15 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
 
     __mos_bo_set_offset_xe(&bo_gem->bo);
 
-    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd, bufmgr_gem->vm_id, bo_gem->gem_handle, 0, bo_gem->bo.offset64, bo_gem->bo.size, XE_VM_BIND_OP_MAP, bufmgr_gem->is_defer_creation_and_binding);
+    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+                    bufmgr_gem->vm_id,
+                    bo_gem->gem_handle,
+                    0,
+                    bo_gem->bo.offset64,
+                    bo_gem->bo.size,
+                    bo_gem->pat_index,
+                    DRM_XE_VM_BIND_OP_MAP,
+                    bufmgr_gem->is_defer_creation_and_binding);
     if (ret)
     {
         MOS_DRM_ASSERTMESSAGE("mos_xe_vm_bind_sync ret: %d", ret);
@@ -1414,6 +1462,7 @@ mos_bo_alloc_userptr_xe(struct mos_bufmgr *bufmgr,
     bo_gem->gem_handle = INVALID_HANDLE;
     bo_gem->bo.handle = INVALID_HANDLE;
     bo_gem->bo.size    = alloc_uptr->size;
+    bo_gem->pat_index = 1; //Currently, there is no cpu_caching and pat_index for user_ptr bo, hard code for it temporarily.
     bo_gem->bo.bufmgr = bufmgr;
     bo_gem->bo.vm_id = INVALID_VM;
     bo_gem->mem_region = MEMZONE_SYS;
@@ -1434,7 +1483,16 @@ mos_bo_alloc_userptr_xe(struct mos_bufmgr *bufmgr,
 
     __mos_bo_set_offset_xe(&bo_gem->bo);
 
-    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd, bufmgr_gem->vm_id, 0, (uint64_t)alloc_uptr->addr, bo_gem->bo.offset64, bo_gem->bo.size, XE_VM_BIND_OP_MAP_USERPTR, bufmgr_gem->is_defer_creation_and_binding);
+    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+                bufmgr_gem->vm_id,
+                0,
+                (uint64_t)alloc_uptr->addr,
+                bo_gem->bo.offset64,
+                bo_gem->bo.size,
+                bo_gem->pat_index,
+                DRM_XE_VM_BIND_OP_MAP_USERPTR,
+                bufmgr_gem->is_defer_creation_and_binding);
+
     if (ret)
     {
         MOS_DRM_ASSERTMESSAGE("mos_xe_vm_bind_userptr_sync ret: %d", ret);
@@ -1513,6 +1571,11 @@ mos_bo_create_from_prime_xe(struct mos_bufmgr *bufmgr, int prime_fd, int size)
         bo_gem->bo.size = size;
 
     bo_gem->bo.handle = handle;
+    /*
+     * Note, currectly there is no cpu_caching and pat_index for external-imported bo, hard code for it.
+     * Need to get the pat_index by the customer_gmminfo with 1way coherency at least later.
+     */
+    bo_gem->pat_index = 1; //Note need to hard code a pat_index with 1way coherency at least
     bo_gem->bo.bufmgr = bufmgr;
 
     bo_gem->gem_handle = handle;
@@ -1526,7 +1589,15 @@ mos_bo_create_from_prime_xe(struct mos_bufmgr *bufmgr, int prime_fd, int size)
 
     __mos_bo_set_offset_xe(&bo_gem->bo);
 
-    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd, bufmgr_gem->vm_id, bo_gem->gem_handle, 0, bo_gem->bo.offset64, bo_gem->bo.size, XE_VM_BIND_OP_MAP, bufmgr_gem->is_defer_creation_and_binding);
+    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+                bufmgr_gem->vm_id,
+                bo_gem->gem_handle,
+                0,
+                bo_gem->bo.offset64,
+                bo_gem->bo.size,
+                bo_gem->pat_index,
+                DRM_XE_VM_BIND_OP_MAP,
+                bufmgr_gem->is_defer_creation_and_binding);
     if (ret)
     {
         MOS_DRM_ASSERTMESSAGE("mos_xe_vm_bind_sync ret: %d", ret);
@@ -2390,7 +2461,7 @@ __mos_bo_context_exec_retry_xe(struct mos_bufmgr *bufmgr,
 
     //query ctx property firstly to check if failure is caused by exec_queue ban
     uint64_t property_value = 0;
-    ret = __mos_get_context_property(bufmgr, ctx, XE_EXEC_QUEUE_GET_PROPERTY_BAN, property_value);
+    ret = __mos_get_context_property(bufmgr, ctx, DRM_XE_EXEC_QUEUE_GET_PROPERTY_BAN, property_value);
 
     /**
      * if exec_queue is banned, queried value is 1, otherwise it is zero;
@@ -2635,7 +2706,8 @@ mos_bo_context_exec_xe(struct mos_linux_bo **bo, int num_bo, struct mos_linux_co
     }
     memclear(sync);
     sync.handle = mos_sync_syncobj_create(bufmgr_gem->fd, 0);
-    sync.flags = DRM_XE_SYNC_SYNCOBJ | DRM_XE_SYNC_SIGNAL;
+    sync.flags = DRM_XE_SYNC_FLAG_SIGNAL;
+    sync.type = DRM_XE_SYNC_TYPE_SYNCOBJ;
 
     memclear(exec);
     exec.extensions = 0;
@@ -2692,21 +2764,21 @@ mos_get_devid_xe(struct mos_bufmgr *bufmgr)
         return devid;
     }
 
-    devid = config->info[XE_QUERY_CONFIG_REV_AND_DEVICE_ID] & 0xffff;
+    devid = config->info[DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID] & 0xffff;
 
     return devid;
 }
 
-static struct drm_xe_engine_class_instance *
-__mos_query_engines_xe(int fd, unsigned int *nengine)
+static struct drm_xe_query_engines *
+__mos_query_engines_xe(int fd)
 {
-    if (fd < 0 || nullptr == nengine)
+    if (fd < 0)
     {
         return nullptr;
     }
 
     struct drm_xe_device_query query;
-    struct drm_xe_engine_class_instance *hw_engines;
+    struct drm_xe_query_engines *engines;
     int ret;
 
     memclear(query);
@@ -2719,32 +2791,27 @@ __mos_query_engines_xe(int fd, unsigned int *nengine)
     if(ret || !query.size)
     {
         MOS_DRM_ASSERTMESSAGE("ret:%d, length:%d", ret, query.size);
-        *nengine = 0;
         return nullptr;
     }
 
-    *nengine = query.size / sizeof(struct drm_xe_engine_class_instance);
-
-    hw_engines = (drm_xe_engine_class_instance *)malloc(query.size);
-    if (nullptr == hw_engines)
+    engines = (drm_xe_query_engines *)malloc(query.size);
+    if (nullptr == engines)
     {
-        MOS_DRM_ASSERTMESSAGE("malloc hw_engines failed");
+        MOS_DRM_ASSERTMESSAGE("malloc engines failed");
         return nullptr;
     }
 
-    memset(hw_engines, 0, query.size);
-    query.data = (uintptr_t)hw_engines;
+    memset(engines, 0, query.size);
+    query.data = (uintptr_t)engines;
     ret = drmIoctl(fd, DRM_IOCTL_XE_DEVICE_QUERY, &query);
     if (ret || !query.size)
     {
         MOS_DRM_ASSERTMESSAGE("ret:%d, length:%d", ret, query.size);
-        MOS_XE_SAFE_FREE(hw_engines);
+        MOS_XE_SAFE_FREE(engines);
         return nullptr;
     }
 
-    //Note28: nengine and hw_engines are from all GTs, need to filter with gt_id
-
-    return hw_engines;
+    return engines;
 }
 
 static int
@@ -2753,16 +2820,17 @@ mos_query_engines_count_xe(struct mos_bufmgr *bufmgr, unsigned int *nengine)
     struct mos_xe_bufmgr_gem *bufmgr_gem = (struct mos_xe_bufmgr_gem *)bufmgr;
     MOS_DRM_CHK_NULL_RETURN_VALUE(nengine, -EINVAL);
 
-    if (nullptr == bufmgr_gem->hw_engines)
+    if (nullptr == bufmgr_gem->engines)
     {
-        bufmgr_gem->hw_engines = __mos_query_engines_xe(bufmgr_gem->fd, &bufmgr_gem->number_hw_engines);
-        if (nullptr == bufmgr_gem->hw_engines)
+        bufmgr_gem->engines = __mos_query_engines_xe(bufmgr_gem->fd);
+        if (nullptr == bufmgr_gem->engines)
         {
+            MOS_DRM_ASSERTMESSAGE("__mos_query_engines_xe failed");
             return -ENODEV;
         }
     }
 
-    *nengine = bufmgr_gem->number_hw_engines;
+    *nengine = bufmgr_gem->engines->num_engines;
 
     return 0;
 }
@@ -2776,43 +2844,46 @@ mos_query_engines_class_xe(struct mos_bufmgr *bufmgr,
 {
     struct mos_xe_bufmgr_gem *bufmgr_gem = (struct mos_xe_bufmgr_gem *)bufmgr;
     struct drm_xe_engine_class_instance *ci = (struct drm_xe_engine_class_instance *)engine_map;
-    struct drm_xe_engine_class_instance *hw_engines;
+    struct drm_xe_query_engines *engines;
 
     MOS_DRM_CHK_NULL_RETURN_VALUE(nengine, -EINVAL);
     MOS_DRM_CHK_NULL_RETURN_VALUE(engine_map, -EINVAL);
 
-    if (nullptr == bufmgr_gem->hw_engines)
+    if (nullptr == bufmgr_gem->engines)
     {
-        bufmgr_gem->hw_engines = __mos_query_engines_xe(bufmgr_gem->fd, &bufmgr_gem->number_hw_engines);
-        if (nullptr == bufmgr_gem->hw_engines)
+        bufmgr_gem->engines = __mos_query_engines_xe(bufmgr_gem->fd);
+        if (nullptr == bufmgr_gem->engines)
         {
             return -ENODEV;
         }
     }
 
-    hw_engines = bufmgr_gem->hw_engines;
+    engines = bufmgr_gem->engines;
 
     int i, num;
-    for (i = 0, num = 0; i < bufmgr_gem->number_hw_engines; i++)
+    struct drm_xe_engine *engine;
+    for (i = 0, num = 0; i < engines->num_engines; i++)
     {
-        //Note29: need to filter engine with caps
-        if (engine_class == hw_engines->engine_class)
+        engine = (struct drm_xe_engine *)&engines->engines[i];
+        if (engine_class == engine->instance.engine_class)
         {
             ci->engine_class = engine_class;
-            ci->engine_instance = hw_engines->engine_instance;
-            ci->gt_id = hw_engines->gt_id;
+            ci->engine_instance = engine->instance.engine_instance;
+            ci->gt_id = engine->instance.gt_id;
             ci++;
             num++;
         }
 
-        hw_engines++;
+        if (num > *nengine)
+        {
+            MOS_DRM_ASSERTMESSAGE("Number of engine instances out of range, %d,%d", num, *nengine);
+            return -1;
+        }
     }
+
     //Note30: need to confirm if engine_instance is ordered, otherwise re-order needed.
 
-    if (num <= *nengine)
-    {
-        *nengine = num;
-    }
+    *nengine = num;
 
     return 0;
 }
@@ -2835,18 +2906,19 @@ mos_query_sys_engines_xe(struct mos_bufmgr *bufmgr, MEDIA_SYSTEM_INFO* gfx_info)
         return -EINVAL;
     }
 
-    if (nullptr == bufmgr_gem->hw_engines)
+    if (nullptr == bufmgr_gem->engines)
     {
-        bufmgr_gem->hw_engines = __mos_query_engines_xe(bufmgr_gem->fd, &bufmgr_gem->number_hw_engines);
-        if (nullptr == bufmgr_gem->hw_engines)
+        bufmgr_gem->engines = __mos_query_engines_xe(bufmgr_gem->fd);
+        if (nullptr == bufmgr_gem->engines)
         {
+            MOS_DRM_ASSERTMESSAGE("__mos_query_engines_xe failed");
             return -ENODEV;
         }
     }
 
     if (0 == gfx_info->VDBoxInfo.NumberOfVDBoxEnabled)
     {
-        unsigned int nengine = bufmgr_gem->number_hw_engines;
+        unsigned int nengine = bufmgr_gem->engines->num_engines;
         struct drm_xe_engine_class_instance *uengines = nullptr;
         uengines = (struct drm_xe_engine_class_instance *)MOS_AllocAndZeroMemory(nengine * sizeof(struct drm_xe_engine_class_instance));
         if (nullptr == uengines)
@@ -2862,6 +2934,7 @@ mos_query_sys_engines_xe(struct mos_bufmgr *bufmgr, MEDIA_SYSTEM_INFO* gfx_info)
         }
         else
         {
+            MOS_OS_ASSERT(nengine <= bufmgr_gem->engines->num_engines);
             gfx_info->VDBoxInfo.NumberOfVDBoxEnabled = nengine;
         }
 
@@ -2875,7 +2948,7 @@ mos_query_sys_engines_xe(struct mos_bufmgr *bufmgr, MEDIA_SYSTEM_INFO* gfx_info)
 
     if (0 == gfx_info->VEBoxInfo.NumberOfVEBoxEnabled)
     {
-        unsigned int nengine = bufmgr_gem->number_hw_engines;
+        unsigned int nengine = bufmgr_gem->engines->num_engines;
         struct drm_xe_engine_class_instance *uengines = nullptr;
         uengines = (struct drm_xe_engine_class_instance *)MOS_AllocAndZeroMemory(nengine * sizeof(struct drm_xe_engine_class_instance));
         if (nullptr == uengines)
@@ -2891,7 +2964,7 @@ mos_query_sys_engines_xe(struct mos_bufmgr *bufmgr, MEDIA_SYSTEM_INFO* gfx_info)
         }
         else
         {
-            MOS_OS_ASSERT(nengine <= bufmgr_gem->number_hw_engines);
+            MOS_OS_ASSERT(nengine <= bufmgr_gem->engines->num_engines);
             gfx_info->VEBoxInfo.NumberOfVEBoxEnabled = nengine;
         }
 
@@ -3091,7 +3164,15 @@ mos_bo_free_xe(struct mos_linux_bo *bo)
 
     if(bo->vm_id != INVALID_VM)
     {
-        ret = mos_xe_vm_bind_sync(bufmgr_gem->fd, bo->vm_id, 0, 0, bo->offset64, bo->size, XE_VM_BIND_OP_UNMAP, bufmgr_gem->is_defer_creation_and_binding);
+        ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+                    bo->vm_id,
+                    0,
+                    0,
+                    bo->offset64,
+                    bo->size,
+                    bo_gem->pat_index,
+                    DRM_XE_VM_BIND_OP_UNMAP,
+                    bufmgr_gem->is_defer_creation_and_binding);
         if (ret)
         {
             MOS_DRM_ASSERTMESSAGE("mos_gem_bo_free mos_vm_unbind ret error. bo:0x%lx, vm_id:%d\r",
@@ -3179,11 +3260,11 @@ mos_bufmgr_gem_destroy_xe(struct mos_bufmgr *bufmgr)
     MOS_XE_SAFE_FREE(bufmgr_gem->config);
     bufmgr_gem->config = nullptr;
 
-    MOS_XE_SAFE_FREE(bufmgr_gem->hw_engines);
-    bufmgr_gem->hw_engines = nullptr;
+    MOS_XE_SAFE_FREE(bufmgr_gem->engines);
+    bufmgr_gem->engines = nullptr;
 
-    MOS_XE_SAFE_FREE(bufmgr_gem->mem_usage);
-    bufmgr_gem->mem_usage = nullptr;
+    MOS_XE_SAFE_FREE(bufmgr_gem->mem_regions);
+    bufmgr_gem->mem_regions = nullptr;
 
     MOS_XE_SAFE_FREE(bufmgr_gem->gt_list);
     bufmgr_gem->gt_list = nullptr;
@@ -3341,7 +3422,7 @@ mos_get_driver_info_xe(struct mos_bufmgr *bufmgr, struct LinuxDriverInfo *drvInf
     uint32_t *hw_config = nullptr;
     uint32_t MaxEuPerSubSlice = 0;
     int i = 0;
-    struct drm_xe_engine_class_instance *hw_engines = nullptr;
+    struct drm_xe_query_engines *engines = nullptr;
     struct drm_xe_query_config *config = nullptr;
     struct mos_xe_bufmgr_gem *bufmgr_gem = (struct mos_xe_bufmgr_gem *)bufmgr;
     drvInfo->hasBsd = 1;
@@ -3399,21 +3480,22 @@ mos_get_driver_info_xe(struct mos_bufmgr *bufmgr, struct LinuxDriverInfo *drvInf
         drvInfo->sliceCount = 1;
     }
 
-    // Step2: Get hw_engines
-    if (nullptr == bufmgr_gem->hw_engines)
+    // Step2: engines
+    if (nullptr == bufmgr_gem->engines)
     {
-        bufmgr_gem->hw_engines = __mos_query_engines_xe(bufmgr_gem->fd, &bufmgr_gem->number_hw_engines);
-        if (nullptr == bufmgr_gem->hw_engines)
+        bufmgr_gem->engines = __mos_query_engines_xe(bufmgr_gem->fd);
+        if (nullptr == bufmgr_gem->engines)
         {
-            MOS_DRM_ASSERTMESSAGE("get hw_engines failed");
+            MOS_DRM_ASSERTMESSAGE("get engines failed");
             return -ENODEV;
         }
     }
-    hw_engines = bufmgr_gem->hw_engines;
+
+    engines = bufmgr_gem->engines;
     int engine_class_num;
-    for (i = 0, engine_class_num = 0; i < bufmgr_gem->number_hw_engines; i++)
+    for (i = 0, engine_class_num = 0; i < engines->num_engines; i++)
     {
-        if (DRM_XE_ENGINE_CLASS_VIDEO_DECODE == hw_engines[i].engine_class)
+        if (DRM_XE_ENGINE_CLASS_VIDEO_DECODE == engines->engines[i].instance.engine_class)
         {
             engine_class_num++;
         }
@@ -3427,9 +3509,9 @@ mos_get_driver_info_xe(struct mos_bufmgr *bufmgr, struct LinuxDriverInfo *drvInf
         drvInfo->hasBsd2 = 1;
     }
 
-    for (i = 0, engine_class_num = 0; i < bufmgr_gem->number_hw_engines; i++)
+    for (i = 0, engine_class_num = 0; i < engines->num_engines; i++)
     {
-        if (DRM_XE_ENGINE_CLASS_VIDEO_DECODE == hw_engines[i].engine_class)
+        if (DRM_XE_ENGINE_CLASS_VIDEO_DECODE == engines->engines[i].instance.engine_class)
         {
             engine_class_num++;
         }
@@ -3457,8 +3539,8 @@ mos_get_driver_info_xe(struct mos_bufmgr *bufmgr, struct LinuxDriverInfo *drvInf
         drvInfo->hasProtectedHuc = 1;
     }
 
-    drvInfo->devId = config->info[XE_QUERY_CONFIG_REV_AND_DEVICE_ID] & 0xffff;
-    drvInfo->devRev = config->info[XE_QUERY_CONFIG_REV_AND_DEVICE_ID] >> 16;
+    drvInfo->devId = config->info[DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID] & 0xffff;
+    drvInfo->devRev = config->info[DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID] >> 16;
 
     return 0;
 }
@@ -3594,22 +3676,17 @@ mos_bufmgr_gem_init_xe(int fd, int batch_size)
     bufmgr_gem->config = __mos_query_config_xe(fd);
     bufmgr_gem->gt_list = __mos_query_gt_list_xe(fd);
     bufmgr_gem->memory_regions = __mos_query_memory_regions_xe(fd);
-    bufmgr_gem->mem_usage = __mos_query_mem_usage_xe(fd);
+    bufmgr_gem->mem_regions = __mos_query_mem_regions_xe(fd);
     bufmgr_gem->has_vram = __mos_has_vram_xe(fd);
     bufmgr_gem->hw_config = __mos_query_hw_config_xe(fd, &bufmgr_gem->config_len);
 
-    if (bufmgr_gem->mem_usage != nullptr)
+    if (bufmgr_gem->mem_regions != nullptr)
     {
-        __mos_get_default_alignment_xe(&bufmgr_gem->bufmgr, bufmgr_gem->mem_usage);
+        __mos_get_default_alignment_xe(&bufmgr_gem->bufmgr, bufmgr_gem->mem_regions);
     }
 
-    if (bufmgr_gem->gt_list != nullptr)
-    {
-        bufmgr_gem->number_gt = bufmgr_gem->gt_list->num_gt;
-    }
-
-    bufmgr_gem->hw_engines = __mos_query_engines_xe(fd, &bufmgr_gem->number_hw_engines);
-    if (0 == bufmgr_gem->number_hw_engines || nullptr == bufmgr_gem->hw_engines)
+    bufmgr_gem->engines = __mos_query_engines_xe(fd);
+    if (nullptr == bufmgr_gem->engines)
     {
         MOS_DRM_ASSERTMESSAGE("Failed to query engines");
 
@@ -3624,8 +3701,8 @@ mos_bufmgr_gem_init_xe(int fd, int batch_size)
         MOS_XE_SAFE_FREE(bufmgr_gem->config);
         bufmgr_gem->config = nullptr;
 
-        MOS_XE_SAFE_FREE(bufmgr_gem->mem_usage);
-        bufmgr_gem->mem_usage = nullptr;
+        MOS_XE_SAFE_FREE(bufmgr_gem->mem_regions);
+        bufmgr_gem->mem_regions = nullptr;
 
         MOS_XE_SAFE_FREE(bufmgr_gem->gt_list);
         bufmgr_gem->gt_list = nullptr;
@@ -3679,7 +3756,7 @@ int mos_get_dev_id_xe(int fd, uint32_t *device_id)
         mos_bufmgr_gem_unref_xe((struct mos_bufmgr *)bufmgr_gem);
         return -ENODEV;
     }
-    *device_id = config->info[XE_QUERY_CONFIG_REV_AND_DEVICE_ID] & 0xffff;
+    *device_id = config->info[DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID] & 0xffff;
 
     mos_bufmgr_gem_unref_xe((struct mos_bufmgr *)bufmgr_gem);
     if (needFreeConfig)
