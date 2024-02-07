@@ -406,6 +406,8 @@ struct mos_xe_external_bo_info {
     int prime_fd;
 };
 
+#define MOS_UNIMPLEMENT(param)    (void)(param)
+
 static pthread_mutex_t bufmgr_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 static drmMMListHead bufmgr_list = { &bufmgr_list, &bufmgr_list };
 
@@ -565,7 +567,7 @@ bool __mos_has_vram_xe(int fd)
     return __mos_query_vram_region_count_xe(fd) > 0;
 }
 
-int mos_xe_force_gt_reset(int fd, int gt_id)
+int mos_force_gt_reset_xe(int fd, int gt_id)
 {
     char reset_string[128];
 
@@ -682,6 +684,20 @@ __mos_get_default_alignment_xe(struct mos_bufmgr *bufmgr, struct drm_xe_query_me
     return 0;
 }
 
+static uint64_t
+mos_get_platform_information_xe(struct mos_bufmgr *bufmgr)
+{
+    MOS_DRM_CHK_NULL_RETURN_VALUE(bufmgr, 0)
+    return bufmgr->platform_information;
+}
+
+static void
+mos_set_platform_information_xe(struct mos_bufmgr *bufmgr, uint64_t p)
+{
+    if(bufmgr)
+        bufmgr->platform_information |= p;
+}
+
 static enum mos_memory_zone
 __mos_bo_memzone_for_address_xe(uint64_t address)
 {
@@ -756,7 +772,6 @@ __mos_vm_create_xe(struct mos_bufmgr *bufmgr)
     int ret;
 
     memclear(vm);
-    vm.flags = DRM_XE_VM_CREATE_FLAG_ASYNC_DEFAULT;
     ret = drmIoctl(bufmgr_gem->fd, DRM_IOCTL_XE_VM_CREATE, &vm);
     if (ret != 0) {
         MOS_DRM_ASSERTMESSAGE("DRM_IOCTL_XE_VM_CREATE failed: %s",
@@ -1045,7 +1060,7 @@ __mos_context_restore_xe(struct mos_bufmgr *bufmgr,
  * @value indicates to quired value with given property
  */
 static int
-__mos_get_context_property(struct mos_bufmgr *bufmgr,
+__mos_get_context_property_xe(struct mos_bufmgr *bufmgr,
             struct mos_linux_context *ctx,
             uint32_t property,
             uint64_t &value)
@@ -1169,7 +1184,7 @@ static int __mos_vm_bind_xe(int fd, uint32_t vm_id, uint32_t exec_queue_id, uint
     return ret;
 }
 
-static int mos_xe_vm_bind_sync(int fd, uint32_t vm_id, uint32_t bo, uint64_t offset,
+static int mos_vm_bind_sync_xe(int fd, uint32_t vm_id, uint32_t bo, uint64_t offset,
         uint64_t addr, uint64_t size, uint16_t pat_index, uint32_t op, bool is_defer)
 {
     if (is_defer)
@@ -1184,8 +1199,7 @@ static int mos_xe_vm_bind_sync(int fd, uint32_t vm_id, uint32_t bo, uint64_t off
     sync.handle = mos_sync_syncobj_create(fd, 0);
 
     int ret = __mos_vm_bind_xe(fd, vm_id, 0, bo, offset, addr, size, pat_index,
-                op, DRM_XE_VM_BIND_FLAG_ASYNC, &sync, 1,  0);
-
+                op, 0, &sync, 1,  0);
     if (ret)
     {
         MOS_DRM_ASSERTMESSAGE("ret:%d, error:%d", ret, -errno);
@@ -1204,12 +1218,12 @@ static int mos_xe_vm_bind_sync(int fd, uint32_t vm_id, uint32_t bo, uint64_t off
     return ret;
 }
 
-static int mos_xe_vm_bind_async(int fd, uint32_t vm_id, uint32_t bo, uint64_t offset,
+static int mos_vm_bind_async_xe(int fd, uint32_t vm_id, uint32_t bo, uint64_t offset,
         uint64_t addr, uint64_t size, uint16_t pat_index, uint32_t op,
         struct drm_xe_sync *sync, uint32_t num_syncs)
 {
     return __mos_vm_bind_xe(fd, vm_id, 0, bo, offset, addr, size, pat_index,
-                op, DRM_XE_VM_BIND_FLAG_ASYNC, sync, num_syncs,    0);
+                op, 0, sync, num_syncs,    0);
 }
 
 drm_export struct mos_linux_bo *
@@ -1239,31 +1253,32 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
     bo_gem->mem_region = MEMZONE_SYS;
     bo_align = MAX(alloc->alignment, bufmgr_gem->default_alignment[MOS_XE_MEM_CLASS_SYSMEM]);
 
-    if (alloc->ext.cpu_cacheable)
-    {
-        /**
-         * It is not allowed for vram bo with WB setting
-         */
-        alloc->ext.cpu_cacheable = false;
-        alloc->ext.pat_index = 13; // Note: hard code here with a default pat index temporarily(WC, uncached)
-    }
-
     if(bufmgr_gem->has_vram &&
-            (MOS_MEMPOOL_VIDEOMEMORY == alloc->ext.mem_type   || MOS_MEMPOOL_DEVICEMEMORY == alloc->ext.mem_type))
+            (MOS_MEMPOOL_VIDEOMEMORY == alloc->ext.mem_type || MOS_MEMPOOL_DEVICEMEMORY == alloc->ext.mem_type))
     {
         bo_gem->mem_region = MEMZONE_DEVICE;
         bo_align = MAX(alloc->alignment, bufmgr_gem->default_alignment[MOS_XE_MEM_CLASS_VRAM]);
+
+        if (alloc->ext.cpu_cacheable)
+        {
+            /**
+             * It is not allowed for vram bo with WB setting
+             */
+            alloc->ext.cpu_cacheable = false;
+            alloc->ext.pat_index = 13; // Note: hard code here with a default pat index temporarily(WC, uncached)
+        }
+
     }
 
     memclear(create);
     if (MEMZONE_DEVICE == bo_gem->mem_region)
     {
         //Note: memory_region is related to gt_id for multi-tiles gpu, take gt_id into consideration in case of multi-tiles
-        create.placement = bufmgr_gem->memory_regions    & (~0x1);
+        create.placement = bufmgr_gem->memory_regions & (~0x1);
     }
     else
     {
-        create.placement = bufmgr_gem->memory_regions    & 0x1;
+        create.placement = bufmgr_gem->memory_regions & 0x1;
     }
 
     //Note: We suggest vm_id=0 here as default, otherwise this bo cannot be exported as prelim fd.
@@ -1291,14 +1306,23 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
     bo_gem->bo.vm_id = INVALID_VM;
     bo_gem->bo.bufmgr = bufmgr;
     bo_gem->bo.align = bo_align;
+    bo_gem->cpu_caching = create.cpu_caching;
+    /**
+     * Note: Better to get a default pat_index to overwite invalid argv. Normally it should not happen.
+     */
+    bo_gem->pat_index = alloc->ext.pat_index == PAT_INDEX_INVALID ? 0 : alloc->ext.pat_index;
 
     if (bufmgr_gem->mem_profiler_fd != -1)
     {
-        snprintf(bufmgr_gem->mem_profiler_buffer, MEM_PROFILER_BUFFER_SIZE, "GEM_CREATE, %d, %d, %lu, %d, %s\n", getpid(), bo_gem->bo.handle, bo_gem->bo.size,bo_gem->mem_region, alloc->name);
-        ret = write(bufmgr_gem->mem_profiler_fd, bufmgr_gem->mem_profiler_buffer, strnlen(bufmgr_gem->mem_profiler_buffer, MEM_PROFILER_BUFFER_SIZE));
+        snprintf(bufmgr_gem->mem_profiler_buffer, MEM_PROFILER_BUFFER_SIZE, "GEM_CREATE, %d, %d, %lu, %d, %s\n",
+                    getpid(), bo_gem->bo.handle, bo_gem->bo.size,bo_gem->mem_region, alloc->name);
+        ret = write(bufmgr_gem->mem_profiler_fd,
+                    bufmgr_gem->mem_profiler_buffer,
+                    strnlen(bufmgr_gem->mem_profiler_buffer, MEM_PROFILER_BUFFER_SIZE));
         if (-1 == ret)
         {
-            MOS_DRM_ASSERTMESSAGE("Failed to write to %s: %s", bufmgr_gem->mem_profiler_path, strerror(errno));
+            MOS_DRM_ASSERTMESSAGE("Failed to write to %s: %s",
+                        bufmgr_gem->mem_profiler_path, strerror(errno));
         }
     }
 
@@ -1314,7 +1338,7 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
 
     __mos_bo_set_offset_xe(&bo_gem->bo);
 
-    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+    ret = mos_vm_bind_sync_xe(bufmgr_gem->fd,
                     bufmgr_gem->vm_id,
                     bo_gem->gem_handle,
                     0,
@@ -1325,7 +1349,7 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
                     bufmgr_gem->is_defer_creation_and_binding);
     if (ret)
     {
-        MOS_DRM_ASSERTMESSAGE("mos_xe_vm_bind_sync ret: %d", ret);
+        MOS_DRM_ASSERTMESSAGE("mos_vm_bind_sync_xe ret: %d", ret);
         mos_bo_free_xe(&bo_gem->bo);
         return nullptr;
     }
@@ -1462,7 +1486,9 @@ mos_bo_alloc_userptr_xe(struct mos_bufmgr *bufmgr,
     bo_gem->gem_handle = INVALID_HANDLE;
     bo_gem->bo.handle = INVALID_HANDLE;
     bo_gem->bo.size    = alloc_uptr->size;
-    bo_gem->pat_index = 1; //Currently, there is no cpu_caching and pat_index for user_ptr bo, hard code for it temporarily.
+    //Currently, there is no cpu_caching and pat_index for user_ptr bo, hard code for it temporarily.
+    bo_gem->pat_index =
+        mos_get_platform_information_xe(bufmgr) & PLATFORM_INFORMATION_OVERRIDE_UPTR_PAT ? 0 : 1;
     bo_gem->bo.bufmgr = bufmgr;
     bo_gem->bo.vm_id = INVALID_VM;
     bo_gem->mem_region = MEMZONE_SYS;
@@ -1483,7 +1509,7 @@ mos_bo_alloc_userptr_xe(struct mos_bufmgr *bufmgr,
 
     __mos_bo_set_offset_xe(&bo_gem->bo);
 
-    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+    ret = mos_vm_bind_sync_xe(bufmgr_gem->fd,
                 bufmgr_gem->vm_id,
                 0,
                 (uint64_t)alloc_uptr->addr,
@@ -1589,7 +1615,7 @@ mos_bo_create_from_prime_xe(struct mos_bufmgr *bufmgr, int prime_fd, int size)
 
     __mos_bo_set_offset_xe(&bo_gem->bo);
 
-    ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+    ret = mos_vm_bind_sync_xe(bufmgr_gem->fd,
                 bufmgr_gem->vm_id,
                 bo_gem->gem_handle,
                 0,
@@ -1600,7 +1626,7 @@ mos_bo_create_from_prime_xe(struct mos_bufmgr *bufmgr, int prime_fd, int size)
                 bufmgr_gem->is_defer_creation_and_binding);
     if (ret)
     {
-        MOS_DRM_ASSERTMESSAGE("mos_xe_vm_bind_sync ret: %d", ret);
+        MOS_DRM_ASSERTMESSAGE("mos_vm_bind_sync_xe ret: %d", ret);
         mos_bo_free_xe(&bo_gem->bo);
         return nullptr;
     }
@@ -2461,7 +2487,7 @@ __mos_bo_context_exec_retry_xe(struct mos_bufmgr *bufmgr,
 
     //query ctx property firstly to check if failure is caused by exec_queue ban
     uint64_t property_value = 0;
-    ret = __mos_get_context_property(bufmgr, ctx, DRM_XE_EXEC_QUEUE_GET_PROPERTY_BAN, property_value);
+    ret = __mos_get_context_property_xe(bufmgr, ctx, DRM_XE_EXEC_QUEUE_GET_PROPERTY_BAN, property_value);
 
     /**
      * if exec_queue is banned, queried value is 1, otherwise it is zero;
@@ -3102,28 +3128,15 @@ mos_query_device_blob_xe(struct mos_bufmgr *bufmgr, MEDIA_SYSTEM_INFO* gfx_info)
 static void
 mos_enable_reuse_xe(struct mos_bufmgr *bufmgr)
 {
-    //Note33: define a macro to indicate unimplement func;
-    //#define MOS_XE_UNIMPLEMENT(return) return;
-    return;
-}
-
-static uint64_t
-mos_get_platform_information_xe(struct mos_bufmgr *bufmgr)
-{
-    MOS_DRM_CHK_NULL_RETURN_VALUE(bufmgr, -EINVAL)
-    return bufmgr->platform_information;
-}
-
-static void
-mos_set_platform_information_xe(struct mos_bufmgr *bufmgr, uint64_t p)
-{
-    if(bufmgr)
-        bufmgr->platform_information |= p;
+    MOS_UNIMPLEMENT(bufmgr);
 }
 
 // The function is not supported on KMD
 static int mos_query_hw_ip_version_xe(struct mos_bufmgr *bufmgr, __u16 engine_class, void *ip_ver_info)
 {
+    MOS_UNIMPLEMENT(bufmgr);
+    MOS_UNIMPLEMENT(engine_class);
+    MOS_UNIMPLEMENT(ip_ver_info);
     return 0;
 }
 
@@ -3164,7 +3177,7 @@ mos_bo_free_xe(struct mos_linux_bo *bo)
 
     if(bo->vm_id != INVALID_VM)
     {
-        ret = mos_xe_vm_bind_sync(bufmgr_gem->fd,
+        ret = mos_vm_bind_sync_xe(bufmgr_gem->fd,
                     bo->vm_id,
                     0,
                     0,
@@ -3223,8 +3236,7 @@ mos_bo_free_xe(struct mos_linux_bo *bo)
 static int
 mos_bo_set_softpin_xe(MOS_LINUX_BO *bo)
 {
-    //same as Note33
-    MOS_UNUSED(bo);
+    MOS_UNIMPLEMENT(bo);
     return 0;
 }
 
@@ -3297,19 +3309,17 @@ mo_get_context_param_xe(struct mos_linux_context *ctx,
                 uint64_t param,
                 uint64_t *value)
 {
-    //same as Note33
-    MOS_UNUSED(ctx);
-    MOS_UNUSED(size);
-    MOS_UNUSED(param);
-    MOS_UNUSED(value);
+    MOS_UNIMPLEMENT(ctx);
+    MOS_UNIMPLEMENT(size);
+    MOS_UNIMPLEMENT(param);
+    MOS_UNIMPLEMENT(value);
     return 0;
 }
 
 static void mos_enable_softpin_xe(struct mos_bufmgr *bufmgr, bool va1m_align)
 {
-    //same as Note33
-    MOS_UNUSED(bufmgr);
-    MOS_UNUSED(va1m_align);
+    MOS_UNIMPLEMENT(bufmgr);
+    MOS_UNIMPLEMENT(va1m_align);
 }
 
 static int
@@ -3391,7 +3401,6 @@ mos_bo_get_oca_exec_list_info_xe(struct mos_linux_bo *bo, int *count)
 static bool
 mos_has_bsd2_xe(struct mos_bufmgr *bufmgr)
 {
-    //same as Note33
     MOS_UNUSED(bufmgr);
     return true;
 }
@@ -3399,17 +3408,13 @@ mos_has_bsd2_xe(struct mos_bufmgr *bufmgr)
 static void
 mos_bo_set_object_capture_xe(struct mos_linux_bo *bo)
 {
-    MOS_UNUSED(bo);
-    // Do nothing, because object capture is not supported in xe kmd.
-    MOS_DRM_NORMALMESSAGE("Object capture is not supported in xe kmd");
+    MOS_UNIMPLEMENT(bo);
 }
 
 static void
 mos_bo_set_object_async_xe(struct mos_linux_bo *bo)
 {
-    MOS_UNUSED(bo);
-    // Do nothing, because object capture is not supported in xe kmd.
-    MOS_DRM_NORMALMESSAGE("Object capture is not supported in xe kmd");
+    MOS_UNIMPLEMENT(bo);
 }
 
 static int
