@@ -1258,16 +1258,7 @@ mos_bo_alloc_xe(struct mos_bufmgr *bufmgr,
     {
         bo_gem->mem_region = MEMZONE_DEVICE;
         bo_align = MAX(alloc->alignment, bufmgr_gem->default_alignment[MOS_XE_MEM_CLASS_VRAM]);
-
-        if (alloc->ext.cpu_cacheable)
-        {
-            /**
-             * It is not allowed for vram bo with WB setting
-             */
-            alloc->ext.cpu_cacheable = false;
-            alloc->ext.pat_index = 13; // Note: hard code here with a default pat index temporarily(WC, uncached)
-        }
-
+        alloc->ext.cpu_cacheable = false;
     }
 
     memclear(create);
@@ -1486,9 +1477,7 @@ mos_bo_alloc_userptr_xe(struct mos_bufmgr *bufmgr,
     bo_gem->gem_handle = INVALID_HANDLE;
     bo_gem->bo.handle = INVALID_HANDLE;
     bo_gem->bo.size    = alloc_uptr->size;
-    //Currently, there is no cpu_caching and pat_index for user_ptr bo, hard code for it temporarily.
-    bo_gem->pat_index =
-        mos_get_platform_information_xe(bufmgr) & PLATFORM_INFORMATION_OVERRIDE_UPTR_PAT ? 0 : 1;
+    bo_gem->pat_index = alloc_uptr->pat_index == PAT_INDEX_INVALID ? 0 : alloc_uptr->pat_index;
     bo_gem->bo.bufmgr = bufmgr;
     bo_gem->bo.vm_id = INVALID_VM;
     bo_gem->mem_region = MEMZONE_SYS;
@@ -3000,6 +2989,53 @@ mos_query_sys_engines_xe(struct mos_bufmgr *bufmgr, MEDIA_SYSTEM_INFO* gfx_info)
     return 0;
 }
 
+void mos_select_fixed_engine_xe(struct mos_bufmgr *bufmgr,
+            void *engine_map,
+            uint32_t *nengine,
+            uint32_t fixed_instance_mask)
+{
+    MOS_UNUSED(bufmgr);
+#if (DEBUG || _RELEASE_INTERNAL)
+    if (fixed_instance_mask)
+    {
+        struct drm_xe_engine_class_instance *_engine_map = (struct drm_xe_engine_class_instance *)engine_map;
+        auto unselect_index = 0;
+        for(auto bit = 0; bit < *nengine; bit++)
+        {
+            if(((fixed_instance_mask >> bit) & 0x1) && (bit > unselect_index))
+            {
+                _engine_map[unselect_index].engine_class = _engine_map[bit].engine_class;
+                _engine_map[unselect_index].engine_instance = _engine_map[bit].engine_instance;
+                _engine_map[unselect_index].gt_id = _engine_map[bit].gt_id;
+                _engine_map[unselect_index].pad = _engine_map[bit].pad;
+                _engine_map[bit].engine_class = 0;
+                _engine_map[bit].engine_instance = 0;
+                _engine_map[bit].gt_id = 0;
+                _engine_map[bit].pad = 0;
+                unselect_index++;
+            }
+            else if(((fixed_instance_mask >> bit) & 0x1) && (bit == unselect_index))
+            {
+                unselect_index++;
+            }
+            else if(!((fixed_instance_mask >> bit) & 0x1))
+            {
+                _engine_map[bit].engine_class = 0;
+                _engine_map[bit].engine_instance = 0;
+                _engine_map[bit].gt_id = 0;
+                _engine_map[bit].pad = 0;
+            }
+        }
+        *nengine = unselect_index;
+    }
+#else
+    MOS_UNUSED(engine_map);
+    MOS_UNUSED(nengine);
+    MOS_UNUSED(fixed_instance_mask);
+#endif
+
+}
+
 static uint32_t *
 __mos_query_hw_config_xe(int fd, uint32_t* config_len)
 {
@@ -3613,6 +3649,7 @@ mos_bufmgr_gem_init_xe(int fd, int batch_size)
     bufmgr_gem->bufmgr.query_engines = mos_query_engines_class_xe;
     bufmgr_gem->bufmgr.get_engine_class_size = mos_get_engine_class_size_xe;
     bufmgr_gem->bufmgr.query_sys_engines = mos_query_sys_engines_xe;
+    bufmgr_gem->bufmgr.select_fixed_engine = mos_select_fixed_engine_xe;
     bufmgr_gem->bufmgr.query_device_blob = mos_query_device_blob_xe;
     bufmgr_gem->bufmgr.get_driver_info = mos_get_driver_info_xe;
     bufmgr_gem->bufmgr.destroy = mos_bufmgr_gem_unref_xe;

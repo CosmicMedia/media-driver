@@ -229,6 +229,7 @@ struct mos_drm_bo_alloc_userptr {
     uint32_t stride = 0;
     unsigned long size = 0;
     unsigned long flags = 0;
+    uint16_t pat_index = 0;
 };
 
 struct mos_drm_bo_alloc_tiled {
@@ -339,6 +340,11 @@ int mos_query_engines(struct mos_bufmgr *bufmgr,
                       void *ci);
 
 size_t mos_get_engine_class_size(struct mos_bufmgr *bufmgr);
+
+void mos_select_fixed_engine(struct mos_bufmgr *bufmgr,
+            void *engine_map,
+            uint32_t *nengine,
+            uint32_t fixed_instance_mask);
 
 void mos_context_destroy(struct mos_linux_context *ctx);
 
