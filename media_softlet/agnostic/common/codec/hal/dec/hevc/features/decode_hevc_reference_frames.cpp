@@ -340,6 +340,7 @@ MOS_STATUS HevcReferenceFrames::UpdateRefIdxMapping(const CODEC_HEVC_PIC_PARAMS 
 MOS_STATUS HevcReferenceFrames::UpdateRefCachePolicy(const CODEC_HEVC_PIC_PARAMS &picParams)
 {
     DECODE_FUNC_CALL();
+    MOS_STATUS sts = MOS_STATUS_SUCCESS;
 
     HevcReferenceFrames        &refFrames     = m_basicFeature->m_refFrames;
     const std::vector<uint8_t> &activeRefList = refFrames.GetActiveReferenceList(picParams);
@@ -352,7 +353,11 @@ MOS_STATUS HevcReferenceFrames::UpdateRefCachePolicy(const CODEC_HEVC_PIC_PARAMS
             {
                 continue;
             }
-            DECODE_CHK_STATUS(m_allocator->UpdateResoreceUsageType(&m_refList[frameIdx]->resRefPic, resourceInputReference));
+            sts = m_allocator->UpdateResoreceUsageType(&m_refList[frameIdx]->resRefPic, resourceInputReference);
+            if (sts != MOS_STATUS_SUCCESS)
+            {
+                DECODE_NORMALMESSAGE("GetReferenceByFrameIndex invalid\n");
+            }
         }
     }
 

@@ -296,6 +296,7 @@ namespace decode
     MOS_STATUS Av1ReferenceFrames::UpdateRefCachePolicy(CodecAv1PicParams &picParams)
     {
         DECODE_FUNC_CALL();
+        MOS_STATUS sts = MOS_STATUS_SUCCESS;
 
         Av1ReferenceFrames &refFrames = m_basicFeature->m_refFrames;
         if (picParams.m_picInfoFlags.m_fields.m_frameType != keyFrame)
@@ -305,8 +306,12 @@ namespace decode
 
             for (uint8_t i = 0; i < activeRefList.size(); i++)
             {
-                uint8_t frameIdx                      = activeRefList[i];
-                DECODE_CHK_STATUS(m_allocator->UpdateResoreceUsageType(refFrames.GetReferenceByFrameIndex(frameIdx), resourceInputReference));
+                uint8_t frameIdx = activeRefList[i];
+                sts              = m_allocator->UpdateResoreceUsageType(refFrames.GetReferenceByFrameIndex(frameIdx), resourceInputReference);
+                if (sts != MOS_STATUS_SUCCESS)
+                {
+                    DECODE_NORMALMESSAGE("GetReferenceByFrameIndex invalid\n");
+                }
             }
         }
 

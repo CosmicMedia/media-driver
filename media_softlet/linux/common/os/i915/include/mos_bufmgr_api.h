@@ -242,6 +242,16 @@ struct mos_drm_bo_alloc_tiled {
     struct mos_drm_bo_alloc_ext ext;
 };
 
+struct mos_drm_uc_version {
+#define UC_TYPE_GUC_SUBMISSION 0
+#define UC_TYPE_HUC            1
+#define UC_TYPE_MAX            2
+#define UC_TYPE_INVALID        (uint16_t)-1
+    uint16_t uc_type;
+    uint32_t major_version;
+    uint32_t minor_version;
+};
+
 struct mos_linux_bo *mos_bo_alloc(struct mos_bufmgr *bufmgr,
                                 struct mos_drm_bo_alloc *alloc);
 struct mos_linux_bo *mos_bo_alloc_userptr(struct mos_bufmgr *bufmgr,
@@ -441,7 +451,6 @@ drm_export bool mos_bo_is_exec_object_async(struct mos_linux_bo *bo);
 #endif
 
 #define PLATFORM_INFORMATION_IS_SERVER     0x1
-#define PLATFORM_INFORMATION_OVERRIDE_UPTR_PAT       0x10
 
 uint64_t mos_get_platform_information(struct mos_bufmgr *bufmgr);
 void mos_set_platform_information(struct mos_bufmgr *bufmgr, uint64_t p);
