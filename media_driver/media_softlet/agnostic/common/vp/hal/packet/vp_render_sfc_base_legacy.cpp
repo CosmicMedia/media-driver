@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2023, Intel Corporation
+* Copyright (c) 2018-2024, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -505,8 +505,16 @@ MOS_STATUS SfcRenderBaseLegacy::SetupSfcState(PVP_SURFACE targetSurface)
 
     m_renderDataLegacy.sfcStateParams->pOsResOutputSurface = &targetSurface->osSurface->OsResource;
 
-    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(m_renderDataLegacy.sfcStateParams->pOsResAVSLineBuffer, m_AVSLineBufferSurfaceArray[m_scalabilityParams.curPipe]));
-    VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(m_renderDataLegacy.sfcStateParams->pOsResIEFLineBuffer, m_IEFLineBufferSurfaceArray[m_scalabilityParams.curPipe]));
+    if (m_renderData.b1stPassOfSfc2PassScaling)
+    {
+        VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(m_renderDataLegacy.sfcStateParams->pOsResAVSLineBuffer, m_AVSLineBufferSurfaceArrayfor1stPassofSfc2Pass[m_scalabilityParams.curPipe]));
+        VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(m_renderDataLegacy.sfcStateParams->pOsResIEFLineBuffer, m_IEFLineBufferSurfaceArrayfor1stPassofSfc2Pass[m_scalabilityParams.curPipe]));
+    }
+    else
+    {
+        VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(m_renderDataLegacy.sfcStateParams->pOsResAVSLineBuffer, m_AVSLineBufferSurfaceArray[m_scalabilityParams.curPipe]));
+        VP_RENDER_CHK_STATUS_RETURN(SetLineBuffer(m_renderDataLegacy.sfcStateParams->pOsResIEFLineBuffer, m_IEFLineBufferSurfaceArray[m_scalabilityParams.curPipe]));
+    }
 
     VP_RENDER_CHK_STATUS_RETURN(SetupScalabilityParams());
 
@@ -690,6 +698,7 @@ MOS_STATUS SfcRenderBaseLegacy::SetScalingParams(PSFC_SCALING_PARAMS scalingPara
     m_renderDataLegacy.sfcStateParams->fColorFillUGPixel = scalingParams->sfcColorfillParams.fColorFillUGPixel;
     m_renderDataLegacy.sfcStateParams->fColorFillVBPixel = scalingParams->sfcColorfillParams.fColorFillVBPixel;
     m_renderDataLegacy.sfcStateParams->fColorFillYRPixel = scalingParams->sfcColorfillParams.fColorFillYRPixel;
+    m_renderDataLegacy.sfcStateParams->isDemosaicEnabled = scalingParams->isDemosaicNeeded;
 
     // SfcInputFormat should be initialized during SetCscParams if SfcInputFormat not being Format_Any.
     if (Format_Any == m_renderDataLegacy.SfcInputFormat)
@@ -747,6 +756,7 @@ MOS_STATUS SfcRenderBaseLegacy::SetCSCParams(PSFC_CSC_PARAMS cscParams)
 
     m_renderDataLegacy.sfcStateParams->bRGBASwapEnable  = IsOutputChannelSwapNeeded(cscParams->outputFormat);
     m_renderDataLegacy.sfcStateParams->bInputColorSpace = cscParams->isInputColorSpaceRGB;
+    m_renderDataLegacy.sfcStateParams->isDemosaicEnabled = cscParams->isDemosaicNeeded;
 
     // Chromasitting config
     // VEBOX use polyphase coefficients for 1x scaling for better quality,
@@ -879,7 +889,14 @@ MOS_STATUS SfcRenderBaseLegacy::SetSfcStateInputOrderingMode(
     }
     else if (MhwSfcInterface::SFC_PIPE_MODE_VEBOX == m_pipeMode)
     {
-        sfcStateParams->dwVDVEInputOrderingMode = MEDIASTATE_SFC_INPUT_ORDERING_VE_4x8;
+        if (m_renderDataLegacy.sfcStateParams && m_renderDataLegacy.sfcStateParams->isDemosaicEnabled)
+        {
+            sfcStateParams->dwVDVEInputOrderingMode = MEDIASTATE_SFC_INPUT_ORDERING_VE_4x4;
+        }
+        else
+        {
+            sfcStateParams->dwVDVEInputOrderingMode = MEDIASTATE_SFC_INPUT_ORDERING_VE_4x8;
+        }
     }
     else if (MEDIASTATE_SFC_PIPE_VE_TO_SFC_INTEGRAL == m_pipeMode)
     {
@@ -1157,39 +1174,80 @@ MOS_STATUS SfcRenderBaseLegacy::AllocateResources()
 
     sfcStateParams = m_renderDataLegacy.sfcStateParams;
 
-    if (m_scalabilityParams.numPipe > m_lineBufferAllocatedInArray ||
-        nullptr == m_AVSLineBufferSurfaceArray ||
-        nullptr == m_IEFLineBufferSurfaceArray ||
-        nullptr == m_SFDLineBufferSurfaceArray)
+    // for 1st pass of Sfc 2Pass case, use the standalone line buffer array to avoid line buffer reallocation
+    if (m_renderDataLegacy.b1stPassOfSfc2PassScaling)
     {
-        DestroyLineBufferArray(m_AVSLineBufferSurfaceArray);
-        DestroyLineBufferArray(m_IEFLineBufferSurfaceArray);
-        DestroyLineBufferArray(m_SFDLineBufferSurfaceArray);
-        m_lineBufferAllocatedInArray = m_scalabilityParams.numPipe;
-        m_AVSLineBufferSurfaceArray  = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArray);
-        VP_RENDER_CHK_NULL_RETURN(m_AVSLineBufferSurfaceArray);
-        m_IEFLineBufferSurfaceArray = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArray);
-        VP_RENDER_CHK_NULL_RETURN(m_IEFLineBufferSurfaceArray);
-        m_SFDLineBufferSurfaceArray = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArray);
-        VP_RENDER_CHK_NULL_RETURN(m_SFDLineBufferSurfaceArray);
+        if (m_scalabilityParams.numPipe > m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass ||
+            nullptr == m_AVSLineBufferSurfaceArrayfor1stPassofSfc2Pass ||
+            nullptr == m_IEFLineBufferSurfaceArrayfor1stPassofSfc2Pass ||
+            nullptr == m_SFDLineBufferSurfaceArrayfor1stPassofSfc2Pass)
+        {
+            DestroyLineBufferArray(m_AVSLineBufferSurfaceArrayfor1stPassofSfc2Pass, m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass);
+            DestroyLineBufferArray(m_IEFLineBufferSurfaceArrayfor1stPassofSfc2Pass, m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass);
+            DestroyLineBufferArray(m_SFDLineBufferSurfaceArrayfor1stPassofSfc2Pass, m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass);
+            m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass = m_scalabilityParams.numPipe;
+            m_AVSLineBufferSurfaceArrayfor1stPassofSfc2Pass  = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass);
+            VP_RENDER_CHK_NULL_RETURN(m_AVSLineBufferSurfaceArrayfor1stPassofSfc2Pass);
+            m_IEFLineBufferSurfaceArrayfor1stPassofSfc2Pass = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass);
+            VP_RENDER_CHK_NULL_RETURN(m_IEFLineBufferSurfaceArrayfor1stPassofSfc2Pass);
+            m_SFDLineBufferSurfaceArrayfor1stPassofSfc2Pass = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArrayfor1stPassofSfc2Pass);
+            VP_RENDER_CHK_NULL_RETURN(m_SFDLineBufferSurfaceArrayfor1stPassofSfc2Pass);
+        }
+
+        // for AVSLineBuffer, IEFLineBuffer and SFDLineBuffer, they are only needed when surface allocation bigger than 4150.
+        // for AVSLineTileBuffer, IEFLineTileBuffer and SFDLineTileBuffer, they are only needed for VdBox SFC scalability case and not needed for VeBox SFC case.
+
+        // Allocate AVS Line Buffer surface----------------------------------------------
+        size = GetAvsLineBufferSize(false, sfcStateParams->b8tapChromafiltering, sfcStateParams->dwInputFrameWidth, sfcStateParams->dwInputFrameHeight);
+        VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_AVSLineBufferSurfaceArrayfor1stPassofSfc2Pass, size, "SfcAVSLineBufferSurfacefor1stPassofSfc2Pass"));
+
+        // Allocate IEF Line Buffer surface----------------------------------------------
+        size = GetIefLineBufferSize(false, sfcStateParams->dwScaledRegionHeight);
+        VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_IEFLineBufferSurfaceArrayfor1stPassofSfc2Pass, size, "SfcIEFLineBufferSurfacefor1stPassofSfc2Pass"));
+
+        if (sfcStateParams->dwScaledRegionHeight > SFC_LINEBUFEER_SIZE_LIMITED)
+        {
+            // Allocate SFD Line Buffer surface
+            size = GetSfdLineBufferSize(false, sfcStateParams->OutputFrameFormat, sfcStateParams->dwScaledRegionWidth, sfcStateParams->dwScaledRegionHeight);
+            VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_SFDLineBufferSurfaceArrayfor1stPassofSfc2Pass, size, "SfcSFDLineBufferSurfacefor1stPassofSfc2Pass"));
+        }
     }
-
-    // for AVSLineBuffer, IEFLineBuffer and SFDLineBuffer, they are only needed when surface allocation bigger than 4150.
-    // for AVSLineTileBuffer, IEFLineTileBuffer and SFDLineTileBuffer, they are only needed for VdBox SFC scalability case and not needed for VeBox SFC case.
-
-    // Allocate AVS Line Buffer surface----------------------------------------------
-    size = GetAvsLineBufferSize(false, sfcStateParams->b8tapChromafiltering, sfcStateParams->dwInputFrameWidth, sfcStateParams->dwInputFrameHeight);
-    VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_AVSLineBufferSurfaceArray, size, "SfcAVSLineBufferSurface"));
-
-    // Allocate IEF Line Buffer surface----------------------------------------------
-    size = GetIefLineBufferSize(false, sfcStateParams->dwScaledRegionHeight);
-    VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_IEFLineBufferSurfaceArray, size, "SfcIEFLineBufferSurface"));
-
-    if (sfcStateParams->dwScaledRegionHeight > SFC_LINEBUFEER_SIZE_LIMITED)
+    else
     {
-        // Allocate SFD Line Buffer surface
-        size = GetSfdLineBufferSize(false, sfcStateParams->OutputFrameFormat, sfcStateParams->dwScaledRegionWidth, sfcStateParams->dwScaledRegionHeight);
-        VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_SFDLineBufferSurfaceArray, size, "SfcSFDLineBufferSurface"));
+        if (m_scalabilityParams.numPipe > m_lineBufferAllocatedInArray ||
+            nullptr == m_AVSLineBufferSurfaceArray ||
+            nullptr == m_IEFLineBufferSurfaceArray ||
+            nullptr == m_SFDLineBufferSurfaceArray)
+        {
+            DestroyLineBufferArray(m_AVSLineBufferSurfaceArray, m_lineBufferAllocatedInArray);
+            DestroyLineBufferArray(m_IEFLineBufferSurfaceArray, m_lineBufferAllocatedInArray);
+            DestroyLineBufferArray(m_SFDLineBufferSurfaceArray, m_lineBufferAllocatedInArray);
+            m_lineBufferAllocatedInArray = m_scalabilityParams.numPipe;
+            m_AVSLineBufferSurfaceArray  = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArray);
+            VP_RENDER_CHK_NULL_RETURN(m_AVSLineBufferSurfaceArray);
+            m_IEFLineBufferSurfaceArray = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArray);
+            VP_RENDER_CHK_NULL_RETURN(m_IEFLineBufferSurfaceArray);
+            m_SFDLineBufferSurfaceArray = MOS_NewArray(VP_SURFACE *, m_lineBufferAllocatedInArray);
+            VP_RENDER_CHK_NULL_RETURN(m_SFDLineBufferSurfaceArray);
+        }
+
+        // for AVSLineBuffer, IEFLineBuffer and SFDLineBuffer, they are only needed when surface allocation bigger than 4150.
+        // for AVSLineTileBuffer, IEFLineTileBuffer and SFDLineTileBuffer, they are only needed for VdBox SFC scalability case and not needed for VeBox SFC case.
+
+        // Allocate AVS Line Buffer surface----------------------------------------------
+        size = GetAvsLineBufferSize(false, sfcStateParams->b8tapChromafiltering, sfcStateParams->dwInputFrameWidth, sfcStateParams->dwInputFrameHeight);
+        VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_AVSLineBufferSurfaceArray, size, "SfcAVSLineBufferSurface"));
+
+        // Allocate IEF Line Buffer surface----------------------------------------------
+        size = GetIefLineBufferSize(false, sfcStateParams->dwScaledRegionHeight);
+        VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_IEFLineBufferSurfaceArray, size, "SfcIEFLineBufferSurface"));
+
+        if (sfcStateParams->dwScaledRegionHeight > SFC_LINEBUFEER_SIZE_LIMITED)
+        {
+            // Allocate SFD Line Buffer surface
+            size = GetSfdLineBufferSize(false, sfcStateParams->OutputFrameFormat, sfcStateParams->dwScaledRegionWidth, sfcStateParams->dwScaledRegionHeight);
+            VP_RENDER_CHK_STATUS_RETURN(AllocateLineBufferArray(m_SFDLineBufferSurfaceArray, size, "SfcSFDLineBufferSurface"));
+        }
     }
 
     if (m_bVdboxToSfc)

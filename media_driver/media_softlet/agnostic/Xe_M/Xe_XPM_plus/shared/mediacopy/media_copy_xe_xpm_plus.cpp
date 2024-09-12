@@ -192,7 +192,12 @@ MOS_STATUS MediaCopyStateXe_Xpm_Plus::MediaRenderCopy(PMOS_RESOURCE src, PMOS_RE
     }
 }
 
-MOS_STATUS MediaCopyStateXe_Xpm_Plus::CapabilityCheck(MCPY_STATE_PARAMS& mcpySrc, MCPY_STATE_PARAMS& mcpyDst, MCPY_ENGINE_CAPS& caps)
+MOS_STATUS MediaCopyStateXe_Xpm_Plus::CapabilityCheck(
+    MOS_FORMAT         format,
+    MCPY_STATE_PARAMS &mcpySrc,
+    MCPY_STATE_PARAMS &mcpyDst,
+    MCPY_ENGINE_CAPS  &caps,
+    MCPY_METHOD        preferMethod)
 {
     // init hw enigne caps.pvc doesn't have vebox
     caps.engineBlt    = 1;
@@ -205,7 +210,8 @@ MOS_STATUS MediaCopyStateXe_Xpm_Plus::CapabilityCheck(MCPY_STATE_PARAMS& mcpySrc
     // common policy check
     // legal check
     // Blt engine does not support protection, allow the copy if dst is staging buffer in system mem
-    if (mcpySrc.CpMode == MCPY_CPMODE_CP && mcpyDst.CpMode == MCPY_CPMODE_CLEAR && !m_allowCPBltCopy)
+    if (preferMethod == MCPY_METHOD_POWERSAVING && 
+        (mcpySrc.CpMode == MCPY_CPMODE_CP || mcpyDst.CpMode == MCPY_CPMODE_CP))
     {
         MCPY_ASSERTMESSAGE("illegal usage");
         return MOS_STATUS_INVALID_PARAMETER;

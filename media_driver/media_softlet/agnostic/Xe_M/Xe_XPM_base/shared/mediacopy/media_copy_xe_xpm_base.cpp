@@ -71,16 +71,11 @@ MOS_STATUS MediaCopyStateXe_Xpm_Base::Initialize(  PMOS_INTERFACE  osInterface, 
 MOS_STATUS MediaCopyStateXe_Xpm_Base::PreCheckCpCopy(
     MCPY_STATE_PARAMS src, MCPY_STATE_PARAMS dest, MCPY_METHOD preferMethod)
 {
-    if ((preferMethod == MCPY_METHOD_POWERSAVING)
-        && (src.CpMode == MCPY_CPMODE_CP)
-        && (dest.CpMode == MCPY_CPMODE_CLEAR))
+    if (preferMethod == MCPY_METHOD_POWERSAVING && 
+        (src.CpMode == MCPY_CPMODE_CP || dest.CpMode == MCPY_CPMODE_CP))
     {
-        //Allow blt engine to do copy when dst buffer is staging buffer and allocate in system mem, since protection off with blt engine.
-        m_allowCPBltCopy = true;
-    }
-    else
-    {
-        m_allowCPBltCopy = false;
+        MCPY_ASSERTMESSAGE("BLT Copy with CP is not supported");
+        return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
     }
 
     return MOS_STATUS_SUCCESS;
@@ -157,7 +152,7 @@ bool MediaCopyStateXe_Xpm_Base::IsVeboxCopySupported(PMOS_RESOURCE src, PMOS_RES
 
     if (m_veboxCopyState)
     {
-        supported = m_veboxCopyState->IsFormatSupported(src) && m_veboxCopyState->IsFormatSupported(dst);
+        supported = m_veboxCopyState->IsSurfaceSupported(src) && m_veboxCopyState->IsSurfaceSupported(dst);
     }
 
     if (src->TileType == MOS_TILE_LINEAR &&

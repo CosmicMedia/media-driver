@@ -94,8 +94,8 @@ public:
     //!           [in] Pointer to input surface
     //! \param    outputSurface
     //!           [in] Pointer to output surface
-    //! \param    plane index
-    //!           [in] plan index, e.g Y plane index 0, UV plane index 1.
+    //! \param    planeIndex
+    //!           [in] Pointer to YUV(RGB) plane index
     //! \return   MOS_STATUS
     //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
     //!
@@ -119,26 +119,15 @@ public:
     //!
     //! \brief    Get Block copy color depth.
     //! \details  get different format's color depth.
-    //! \param    surface 
-    //!           [in] input or output surface.
-    //! \return   MOS_STATUS
-    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //! \param    Gmm format and bits per Pixel
+    //!           [in] Gmm format, Bits per Pixel;
+    //! \return   color depth
+    //!           Return color depth
     //!
     uint32_t GetBlkCopyColorDepth(
         GMM_RESOURCE_FORMAT dstFormat,
-        uint32_t            BytesPerTexel);
+        uint32_t            Pixel);
 
-    //!
-    //! \brief    Get Fast copy color depth.
-    //! \details  get different format's color depth.
-    //! \param    surface
-    //!           [in] input or output surface.
-    //! \return   MOS_STATUS
-    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
-    //!
-    uint32_t GetFastCopyColorDepth(
-        GMM_RESOURCE_FORMAT dstFormat,
-        uint32_t            BytesPerTexel);
     //!
     //! \brief    Get plane's byte per texel
     //! \details  Get plane's byte per texel
@@ -319,8 +308,27 @@ protected:
     MOS_STATUS BlockCopyBuffer(
         PBLT_STATE_PARAM pBltStateParam);
 
-public:
-    bool               m_blokCopyon       = false;
+    //!
+    //! \brief    SetPrologParamsforCmdbuffer
+    //! \details  Set PrologParams for Cmdbuffer
+    //! \param    PMOS_COMMAND_BUFFER
+    //!           [in] Pointer to PMOS_COMMAND_BUFFER
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    MOS_STATUS SetPrologParamsforCmdbuffer(PMOS_COMMAND_BUFFER cmdBuffer);
+
+     //!
+    //! \brief    Set BCS_SWCTR cmd
+    //! \details  Set BCS_SWCTR for Cmdbuffer
+    //! \param    PMOS_COMMAND_BUFFER
+    //!           [in] Pointer to PMOS_COMMAND_BUFFER
+    //! \return   MOS_STATUS
+    //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
+    //!
+    virtual MOS_STATUS SetBCSSWCTR(MOS_COMMAND_BUFFER *cmdBuffer);
+
+ public:
     PMOS_INTERFACE     m_osInterface      = nullptr;
     MhwInterfacesNext *m_mhwInterfaces    = nullptr;
     MhwCpInterface    *m_cpInterface      = nullptr;

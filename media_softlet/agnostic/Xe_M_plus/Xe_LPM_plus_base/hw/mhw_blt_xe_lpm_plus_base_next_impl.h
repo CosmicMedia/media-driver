@@ -125,7 +125,30 @@ public:
             cmd.DW1.DestinationControlSurfaceType = 0;  // 1 is media; 0 is 3D;
             cmd.DW14.DestinationCompressionFormat = dstCompressionFormat;
         }
-
+        if (srcMmcModel != MOS_MEMCOMP_DISABLED)
+        {
+            cmd.DW8.SourceCompressionEnable    = 1;
+            cmd.DW12.SourceCompressionFormat   = srcCompressionFormat;
+            cmd.DW8.SourceAuxiliarysurfacemode =
+                Cmd::XY_BLOCK_COPY_BLT_CMD::SOURCE_AUXILIARY_SURFACE_MODE_AUX_CCS_E;
+            if (srcMmcModel == MOS_MEMCOMP_MC)
+            {
+                cmd.DW8.SourceControlSurfaceType =
+                    Cmd::XY_BLOCK_COPY_BLT_CMD::SOURCE_CONTROL_SURFACE_TYPE_MEDIA_CONTROL_SURFACE;
+                if (params.dwPlaneNum >=2)
+                {
+                    // luma/chroma is represented by the MSB of the 5 bit format and used only for media decompression.
+                    if (params.dwPlaneIndex == 0)  // first plane
+                    {
+                        cmd.DW12.SourceCompressionFormat = srcCompressionFormat & 0x0F;
+                    }
+                    else  // second or third
+                    {
+                        cmd.DW12.SourceCompressionFormat = srcCompressionFormat | 0x10;
+                    }
+                }
+            }
+        }
         cmd.DW1.DestinationTiling = GetFastTilingMode(dstTiledMode);
         cmd.DW8.SourceTiling      = GetFastTilingMode(srcTiledMode);
         cmd.DW8.SourceMocs =
@@ -225,6 +248,21 @@ public:
     }
 
 protected:
+        //!
+    //! \brief    Get Block copy MOCS
+    //! \details  BLT function to get the MOCS
+    //! \param    [in] MOS_HW_RESOURCE_DEF
+    //!           Pointer to UsageDef
+    //! \return   uint32_t
+    //!           return the MOCS value
+    //!
+    uint32_t GetBlockCopyBltMOCS(MOS_HW_RESOURCE_DEF UsageDef)
+    {
+        // MemoryObject will get 7 bits data. bit[0] for encrypt and bits[1-7] for MOCS.
+        return m_osItf->pfnCachePolicyGetMemoryObject(UsageDef,
+                    m_osItf->pfnGetGmmClientContext(m_osItf)).DwordValue;
+    }
+
     using base_t = blt::Impl<mhw::blt::xe_lpm_plus_next::Cmd>;
 MEDIA_CLASS_DEFINE_END(mhw__blt__xe_lpm_plus_next__Impl)
 };  // Impl

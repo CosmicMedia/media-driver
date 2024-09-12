@@ -35,7 +35,7 @@
 #if (_RELEASE_INTERNAL || _DEBUG)
 #if defined(CM_DIRECT_GUC_SUPPORT)
 #include "work_queue_mngr.h"
-#include "KmGucClientInterface.h"
+#include <FirmwareManager/GpuFW/GucModule/commoninc/KmGucClientInterface.h>
 #endif
 #endif
 
@@ -190,6 +190,7 @@ typedef enum _MOS_FORCE_VEBOX
 #define MOS_FORCEENGINE_MASK                         0xf
 #define MOS_FORCEENGINE_ENGINEID_BITSNUM             4 //each VDBOX ID occupies 4 bits see defintion MOS_FORCE_VDBOX
 #define MOS_INVALID_FORCEENGINE_VALUE                0xffffffff
+#define MOS_INVALID_ENGINE_INSTANCE                  0xff // this invalid engine instance value aligns with KMD
 #endif
 
 typedef struct _MOS_VIRTUALENGINE_INTERFACE *PMOS_VIRTUALENGINE_INTERFACE;
@@ -251,6 +252,7 @@ typedef enum _MOS_VEBOX_NODE_IND
 typedef int32_t MOS_SUBMISSION_TYPE;
 
 #define EXTRA_PADDING_NEEDED                            4096
+#define MEDIA_CMF_UNCOMPRESSED_WRITE                    0xC
 
 //!
 //! \brief Structure to command buffer
@@ -483,6 +485,18 @@ class CmdBufMgrNext;
 class MosCpInterface;
 class MosDecompression;
 
+//!
+//! \brief Structure to Unified  InDirectState Dump Info
+//!
+struct INDIRECT_STATE_INFO
+{
+    uint32_t        stateSize              = 0;        //size of indirectstate
+    uint32_t        *indirectState         = nullptr;  //indirectstate address
+    uint32_t        *gfxAddressBottom      = nullptr;  //indirect gfx address bottom
+    uint32_t        *gfxAddressTop         = nullptr;  //indirect gfx address top
+    const char      *stateName             = "";
+};
+
 struct MosStreamState
 {
     OsDeviceContext     *osDeviceContext        = nullptr;
@@ -514,6 +528,8 @@ struct MosStreamState
 
     bool mediaReset                             = false;    //!< Flag to indicate media reset is enabled
 
+    bool forceMediaCompressedWrite              = false;    //!< Flag to force media compressed write
+
     bool simIsActive                            = false;    //!< Flag to indicate if Simulation is enabled
     MOS_NULL_RENDERING_FLAGS nullHwAccelerationEnable = {}; //!< To indicate which components to enable Null HW support
 
@@ -534,6 +550,7 @@ struct MosStreamState
     bool  dumpCommandBufferToFile               = false;    //!< Indicates that the command buffer should be dumped to a file
     bool  dumpCommandBufferAsMessages           = false;    //!< Indicates that the command buffer should be dumped via MOS normal messages
     char  sDirName[MOS_MAX_HLT_FILENAME_LEN]    = {0};      //!< Dump Directory name - maximum 260 bytes length
+    std::vector<INDIRECT_STATE_INFO> indirectStateInfo                     = {};
 #endif // MOS_COMMAND_BUFFER_DUMP_SUPPORTED
 
 #if _DEBUG || _RELEASE_INTERNAL
@@ -684,6 +701,8 @@ typedef struct _MOS_INTERFACE
 
     bool                            umdMediaResetEnable;
 
+    bool                            forceMediaCompressedWrite;
+
 #if MOS_MEDIASOLO_SUPPORTED
     // MediaSolo related
     int32_t                         bSoloInUse;                                   //!< Flag to indicate if MediaSolo is enabled
@@ -717,6 +736,7 @@ typedef struct _MOS_INTERFACE
 #endif // (_DEBUG || _RELEASE_INTERNAL)
 
     bool                            apoMosEnabled;                                //!< apo mos or not
+    bool                            apoMosForLegacyRuntime = false;
     std::vector<ResourceDumpAttri>  resourceDumpAttriArray;
 
     MEMORY_OBJECT_CONTROL_STATE (* pfnCachePolicyGetMemoryObject) (
@@ -927,6 +947,14 @@ typedef struct _MOS_INTERFACE
     MOS_STATUS (* pfnDumpCommandBuffer) (
         PMOS_INTERFACE              pOsInterface,
         PMOS_COMMAND_BUFFER         pCmdBuffer);
+
+    void (* pfnAddIndirectState) (
+        PMOS_INTERFACE      pOsInterface,
+        uint32_t            indirectStateSize,
+        uint32_t            *pIndirectState,
+        uint32_t            *gfxAddressBottom,
+        uint32_t            *gfxAddressTop,
+        const char          *stateName);
 
     #define pfnFreeResource(pOsInterface, pResource) \
        pfnFreeResource(pOsInterface, __FUNCTION__, __FILE__, __LINE__, pResource)
@@ -2175,7 +2203,7 @@ struct _MOS_GPUCTX_CREATOPTIONS_ENHANCED : public _MOS_GPUCTX_CREATOPTIONS
 #if (_DEBUG || _RELEASE_INTERNAL)
         for (auto i = 0; i < MOS_MAX_ENGINE_INSTANCE_PER_CLASS; i++)
         {
-            EngineInstance[i] = 0xff;
+            EngineInstance[i] = MOS_INVALID_ENGINE_INSTANCE;
         }
 #endif
     }
@@ -2201,7 +2229,7 @@ struct _MOS_GPUCTX_CREATOPTIONS_ENHANCED : public _MOS_GPUCTX_CREATOPTIONS
 #if (_DEBUG || _RELEASE_INTERNAL)
             for (auto i = 0; i < MOS_MAX_ENGINE_INSTANCE_PER_CLASS; i++)
             {
-                EngineInstance[i] = 0xff;
+                EngineInstance[i] = MOS_INVALID_ENGINE_INSTANCE;
             }
 #endif
         }

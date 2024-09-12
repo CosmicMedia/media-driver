@@ -135,6 +135,13 @@ void SwFilter::DestroySwFilter(SwFilter* p)
     }
 }
 
+VP_MHWINTERFACE *SwFilter::GetHwInterface()
+{
+    VP_FUNC_CALL();
+
+    return m_vpInterface.GetHwInterface();
+}
+
 /****************************************************************************************************/
 /*                                      SwFilterCsc                                                 */
 /****************************************************************************************************/
@@ -188,7 +195,7 @@ MOS_STATUS SwFilterCsc::Configure(VP_PIPELINE_PARAMS &params, bool isInputSurf, 
 namespace vp
 {
 MOS_STATUS GetVeboxOutputParams(VP_EXECUTE_CAPS &executeCaps, MOS_FORMAT inputFormat, MOS_TILE_TYPE inputTileType, MOS_FORMAT outputFormat,
-                                MOS_FORMAT &veboxOutputFormat, MOS_TILE_TYPE &veboxOutputTileType);
+                                MOS_FORMAT &veboxOutputFormat, MOS_TILE_TYPE &veboxOutputTileType, VPHAL_CSPACE colorSpaceOutput);
 }
 
 MOS_STATUS SwFilterCsc::Configure(PVP_SURFACE surfInput, PVP_SURFACE surfOutput, VP_EXECUTE_CAPS caps)
@@ -206,7 +213,7 @@ MOS_STATUS SwFilterCsc::Configure(PVP_SURFACE surfInput, PVP_SURFACE surfOutput,
         MOS_TILE_TYPE   veboxOutputTileType = surfInput->osSurface->TileType;
 
         GetVeboxOutputParams(caps, surfInput->osSurface->Format, surfInput->osSurface->TileType,
-                            surfOutput->osSurface->Format, veboxOutputFormat, veboxOutputTileType);
+                            surfOutput->osSurface->Format, veboxOutputFormat, veboxOutputTileType, surfOutput->ColorSpace);
         m_Params.input.colorSpace = surfInput->ColorSpace;
         m_Params.output.colorSpace = surfInput->ColorSpace;
 
@@ -396,6 +403,7 @@ MOS_STATUS SwFilterScaling::Configure(VP_PIPELINE_PARAMS &params, bool isInputSu
         m_Params.rotation.rotationNeeded    = false;
         m_Params.output.dwWidth             = surfOutput->dwWidth;
         m_Params.output.dwHeight            = surfOutput->dwHeight;
+        m_Params.output.dwPitch             = surfOutput->dwPitch;
         m_Params.input.rcDst                = surfInput->rcDst;
         m_Params.output.rcSrc               = surfOutput->rcSrc;
         m_Params.output.rcDst               = surfOutput->rcDst;
@@ -406,6 +414,7 @@ MOS_STATUS SwFilterScaling::Configure(VP_PIPELINE_PARAMS &params, bool isInputSu
         m_Params.rotation.rotationNeeded    = true;
         m_Params.output.dwWidth             = surfOutput->dwHeight;
         m_Params.output.dwHeight            = surfOutput->dwWidth;
+        m_Params.output.dwPitch             = surfOutput->dwPitch;
         RECT_ROTATE(m_Params.input.rcDst, surfInput->rcDst);
         RECT_ROTATE(m_Params.output.rcSrc, surfOutput->rcSrc);
         RECT_ROTATE(m_Params.output.rcDst, surfOutput->rcDst);
@@ -497,6 +506,7 @@ MOS_STATUS SwFilterScaling::Configure(VEBOX_SFC_PARAMS &params)
         m_Params.rotation.rotationNeeded = false;
         m_Params.output.dwWidth     = params.output.surface->dwWidth;
         m_Params.output.dwHeight    = params.output.surface->dwHeight;
+        m_Params.output.dwPitch     = params.output.surface->dwPitch;
         m_Params.input.rcDst        = params.output.rcDst;
         m_Params.output.rcSrc       = recOutput;
         m_Params.output.rcDst       = recOutput;
@@ -507,6 +517,7 @@ MOS_STATUS SwFilterScaling::Configure(VEBOX_SFC_PARAMS &params)
         m_Params.rotation.rotationNeeded = true;
         m_Params.output.dwWidth     = params.output.surface->dwHeight;
         m_Params.output.dwHeight    = params.output.surface->dwWidth;
+        m_Params.output.dwPitch     = params.output.surface->dwPitch;
 
         RECT_ROTATE(m_Params.input.rcDst, params.output.rcDst);
         RECT_ROTATE(m_Params.output.rcSrc, recOutput);
@@ -545,6 +556,7 @@ MOS_STATUS SwFilterScaling::Configure(PVP_SURFACE surfInput, PVP_SURFACE surfOut
     m_Params.rotation.rotationNeeded    = false;
     m_Params.output.dwWidth             = surfOutput->osSurface->dwWidth;
     m_Params.output.dwHeight            = surfOutput->osSurface->dwHeight;
+    m_Params.output.dwPitch             = surfOutput->osSurface->dwPitch;
     m_Params.output.rcSrc               = surfOutput->rcSrc;
     m_Params.output.rcDst               = surfOutput->rcDst;
     m_Params.output.rcMaxSrc            = surfOutput->rcMaxSrc;
@@ -1298,6 +1310,18 @@ MOS_STATUS SwFilterHdr::Configure(VP_PIPELINE_PARAMS &params, bool isInputSurf, 
     uint32_t     dwUpdateMask = 0;
     bool                        bSupported       = false;
     VPHAL_HDR_LUT_MODE          CurrentLUTMode      = VPHAL_HDR_LUT_MODE_NONE;
+    VP_PUBLIC_CHK_NULL_RETURN(m_vpInterface.GetHwInterface());
+    VP_PUBLIC_CHK_NULL_RETURN(m_vpInterface.GetHwInterface()->m_userFeatureControl);
+    VP_PUBLIC_CHK_NULL_RETURN(m_vpInterface.GetHwInterface()->m_vpPlatformInterface);
+    VP_PUBLIC_CHK_NULL_RETURN(m_vpInterface.GetHwInterface()->m_reporting);
+
+    auto userFeatureControl = m_vpInterface.GetHwInterface()->m_userFeatureControl;
+    auto vpPlatformInterface = m_vpInterface.GetHwInterface()->m_vpPlatformInterface;
+    VpFeatureReport *vpFeatureReport  = dynamic_cast<VpFeatureReport *>(m_vpInterface.GetHwInterface()->m_reporting);
+#if (_DEBUG || _RELEASE_INTERNAL)
+    m_Params.isL0KernelEnabled               = (vpPlatformInterface->IsAdvanceNativeKernelSupported() && userFeatureControl->EnableL03DLut());
+    vpFeatureReport->GetFeatures().isL03DLut = m_Params.isL0KernelEnabled;
+#endif
 
     VP_PUBLIC_CHK_NULL_RETURN(surfInput);
     VP_PUBLIC_CHK_NULL_RETURN(surfOutput);

@@ -222,6 +222,11 @@ VpResourceManager::~VpResourceManager()
         m_allocator.DestroyVpSurface(m_vebox1DLookUpTables);
     }
 
+    if (m_innerTileConvertInput)
+    {
+        m_allocator.DestroyVpSurface(m_innerTileConvertInput);
+    }
+
     if (m_temperalInput)
     {
         m_allocator.DestroyVpSurface(m_temperalInput);
@@ -246,6 +251,13 @@ VpResourceManager::~VpResourceManager()
 
     m_allocator.DestroyVpSurface(m_cmfcCoeff);
     m_allocator.DestroyVpSurface(m_decompressionSyncSurface);
+    for (int i = 0; i < 8; ++i)
+    {
+        if (m_fcIntermediaSurfaceInput[i])
+        {
+            m_allocator.DestroyVpSurface(m_fcIntermediaSurfaceInput[i]);
+        }
+    }
 
     m_allocator.CleanRecycler();
 }
@@ -802,6 +814,13 @@ MOS_STATUS VpResourceManager::GetIntermediaOutputSurfaceParams(VP_EXECUTE_CAPS& 
         params.rcSrc = scaling->GetSwFilterParams().output.rcSrc;
         params.rcDst = scaling->GetSwFilterParams().output.rcDst;
         params.rcMaxSrc = scaling->GetSwFilterParams().output.rcMaxSrc;
+
+        if (scaling->GetSwFilterParams().interlacedScalingType == ISCALING_INTERLEAVED_TO_FIELD)
+        {
+            params.height = scaling->GetSwFilterParams().output.dwHeight / 2;
+            params.rcDst.bottom = params.rcDst.bottom / 2;
+            params.rcMaxSrc.bottom = params.rcMaxSrc.bottom / 2;
+        }
     }
     else
     {
@@ -1069,7 +1088,50 @@ MOS_STATUS VpResourceManager::AssignFcResources(VP_EXECUTE_CAPS &caps, std::vect
         MOS_MMC_DISABLED,
         allocated));
     surfSetting.surfGroup.insert(std::make_pair(SurfaceTypeDecompressionSync, m_decompressionSyncSurface));
+    
+    // Allocate L0 fc inter media Surface Input
+    for (uint32_t i = 0; i < inputSurfaces.size(); ++i)
+    {
+        if (inputSurfaces[i]->osSurface->Format == Format_RGBP ||
+            inputSurfaces[i]->osSurface->Format == Format_BGRP)
+        {
+            VP_PUBLIC_CHK_STATUS_RETURN(m_allocator.ReAllocateSurface(
+                m_fcIntermediaSurfaceInput[i],
+                "fcIntermediaSurfaceInput",
+                Format_A8R8G8B8,
+                MOS_GFXRES_2D,
+                MOS_TILE_Y,
+                inputSurfaces[i]->osSurface->dwWidth,
+                inputSurfaces[i]->osSurface->dwHeight,
+                false,
+                MOS_MMC_DISABLED,
+                allocated,
+                false,
+                IsDeferredResourceDestroyNeeded(),
+                MOS_HW_RESOURCE_USAGE_VP_INTERNAL_READ_WRITE_RENDER));
+            m_fcIntermediaSurfaceInput[i]->osSurface->Format = Format_A8R8G8B8;
+        }
+        else if (inputSurfaces[i]->osSurface->Format == Format_444P)
+        {
+            VP_PUBLIC_CHK_STATUS_RETURN(m_allocator.ReAllocateSurface(
+                m_fcIntermediaSurfaceInput[i],
+                "fcIntermediaSurfaceInput",
+                Format_AYUV,
+                MOS_GFXRES_2D,
+                MOS_TILE_Y,
+                inputSurfaces[i]->osSurface->dwWidth,
+                inputSurfaces[i]->osSurface->dwHeight,
+                false,
+                MOS_MMC_DISABLED,
+                allocated,
+                false,
+                IsDeferredResourceDestroyNeeded(),
+                MOS_HW_RESOURCE_USAGE_VP_INTERNAL_READ_WRITE_RENDER));
+            m_fcIntermediaSurfaceInput[i]->osSurface->Format = Format_AYUV;
+        }
 
+        surfSetting.surfGroup.insert(std::make_pair((SurfaceType)(SurfaceTypeFcIntermediaInput + i), m_fcIntermediaSurfaceInput[i]));
+    }
     return MOS_STATUS_SUCCESS;
 }
 
@@ -1214,15 +1276,37 @@ MOS_STATUS VpResourceManager::AssignExecuteResource(VP_EXECUTE_CAPS& caps, std::
     return MOS_STATUS_SUCCESS;
 }
 
+VPHAL_CSPACE GetDemosaicOutputColorSpace(VPHAL_CSPACE colorSpace)
+{
+    return IS_COLOR_SPACE_BT2020(colorSpace) ? CSpace_BT2020_RGB : CSpace_sRGB;
+}
+
+MOS_FORMAT GetDemosaicOutputFormat(VPHAL_CSPACE colorSpace)
+{
+    return IS_COLOR_SPACE_BT2020(colorSpace) ? Format_R10G10B10A2 : Format_A8B8G8R8;
+}
+
 MOS_STATUS GetVeboxOutputParams(VP_EXECUTE_CAPS &executeCaps, MOS_FORMAT inputFormat, MOS_TILE_TYPE inputTileType, MOS_FORMAT outputFormat,
-                                MOS_FORMAT &veboxOutputFormat, MOS_TILE_TYPE &veboxOutputTileType)
+                                MOS_FORMAT &veboxOutputFormat, MOS_TILE_TYPE &veboxOutputTileType, VPHAL_CSPACE colorSpaceOutput)
 {
     VP_FUNC_CALL();
 
     // Vebox Chroma Co-Sited downsampleing is part of VEO. It only affects format of vebox output surface, but not
     // affect sfc input format, that's why different logic between GetSfcInputFormat and GetVeboxOutputParams.
     // Check DI first and downsampling to NV12 if possible to save bandwidth no matter IECP enabled or not.
-    if (executeCaps.bDI || executeCaps.bDiProcess2ndField)
+    if (executeCaps.b3DlutOutput)
+    {
+        if (IS_RGB64_FLOAT_FORMAT(outputFormat))  // SFC output FP16, YUV->ABGR16
+        {
+            veboxOutputFormat = Format_A16B16G16R16;
+        }
+        else
+        {
+            veboxOutputFormat = IS_COLOR_SPACE_BT2020(colorSpaceOutput) ? Format_R10G10B10A2 : Format_A8B8G8R8;
+        }
+        veboxOutputTileType = inputTileType;
+    }
+    else if (executeCaps.bDI || executeCaps.bDiProcess2ndField)
     {
         // NV12 will be used if target output is not YUV2 to save bandwidth.
         if (outputFormat == Format_YUY2)
@@ -1248,6 +1332,11 @@ MOS_STATUS GetVeboxOutputParams(VP_EXECUTE_CAPS &executeCaps, MOS_FORMAT inputFo
         veboxOutputFormat = Format_AYUV;
         veboxOutputTileType = inputTileType;
     }
+    else if (executeCaps.bDemosaicInUse)
+    {
+        veboxOutputFormat = GetDemosaicOutputFormat(colorSpaceOutput);
+        veboxOutputTileType = inputTileType;
+    }
     else
     {
         veboxOutputFormat = inputFormat;
@@ -1256,6 +1345,7 @@ MOS_STATUS GetVeboxOutputParams(VP_EXECUTE_CAPS &executeCaps, MOS_FORMAT inputFo
 
     return MOS_STATUS_SUCCESS;
 }
+
 
 MOS_FORMAT GetSfcInputFormat(VP_EXECUTE_CAPS &executeCaps, MOS_FORMAT inputFormat, VPHAL_CSPACE colorSpaceOutput, MOS_FORMAT outputFormat)
 {
@@ -1295,6 +1385,10 @@ MOS_FORMAT GetSfcInputFormat(VP_EXECUTE_CAPS &executeCaps, MOS_FORMAT inputForma
         // set to YUY2 here.
         return Format_YUY2;
     }
+    else if (executeCaps.bDemosaicInUse)
+    {
+        return GetDemosaicOutputFormat(colorSpaceOutput);
+    }
 
     return inputFormat;
 }
@@ -1323,7 +1417,7 @@ MOS_STATUS VpResourceManager::ReAllocateVeboxOutputSurface(VP_EXECUTE_CAPS& caps
     MOS_TILE_TYPE   veboxOutputTileType                 = inputSurface->osSurface->TileType;
 
     VP_PUBLIC_CHK_STATUS_RETURN(GetVeboxOutputParams(caps, inputSurface->osSurface->Format, inputSurface->osSurface->TileType,
-                                            outputSurface->osSurface->Format, veboxOutputFormat, veboxOutputTileType));
+                                            outputSurface->osSurface->Format, veboxOutputFormat, veboxOutputTileType, outputSurface->ColorSpace));
 
     allocated = false;
 
@@ -1849,7 +1943,27 @@ MOS_STATUS VpResourceManager::AllocateVeboxResource(VP_EXECUTE_CAPS& caps, VP_SU
         }
     }
     // cappipe
+    if (caps.enableSFCLinearOutputByTileConvert)
+    {
+        VP_PUBLIC_CHK_STATUS_RETURN(m_allocator.ReAllocateSurface(
+            m_innerTileConvertInput,
+            "TempTargetSurface",
+            outputSurface->osSurface->Format,
+            MOS_GFXRES_2D,
+            MOS_TILE_Y,
+            outputSurface->osSurface->dwWidth,
+            outputSurface->osSurface->dwHeight,
+            false,
+            MOS_MMC_DISABLED,
+            bAllocated,
+            false,
+            IsDeferredResourceDestroyNeeded()));
 
+        m_innerTileConvertInput->ColorSpace = outputSurface->ColorSpace;
+        m_innerTileConvertInput->rcSrc      = outputSurface->rcSrc;
+        m_innerTileConvertInput->rcDst      = outputSurface->rcDst;
+        m_innerTileConvertInput->rcMaxSrc   = outputSurface->rcMaxSrc;
+    }
     return MOS_STATUS_SUCCESS;
 }
 
@@ -2192,6 +2306,11 @@ MOS_STATUS VpResourceManager::AssignVeboxResource(VP_EXECUTE_CAPS& caps, VP_SURF
     {
         // Insert DV 1Dlut surface
         surfGroup.insert(std::make_pair(SurfaceType1k1dLut, m_vebox1DLookUpTables));
+    }
+
+    if (caps.enableSFCLinearOutputByTileConvert)
+    {
+        surfGroup.insert(std::make_pair(SurfaceTypeInnerTileConvertInput, m_innerTileConvertInput));
     }
 
     // Update previous Dn output flag for next frame to use.

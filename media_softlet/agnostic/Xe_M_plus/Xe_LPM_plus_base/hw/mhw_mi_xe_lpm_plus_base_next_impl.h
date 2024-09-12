@@ -140,6 +140,12 @@ public:
         case MHW_MMIO_CCS0_AUX_TABLE_INVALIDATE:
             mmioRegisters = M_MMIO_CCS0_AUX_TABLE_INVALIDATE;
             break;
+        case MHW_MMIO_BLT_AUX_TABLE_BASE_LOW:
+            mmioRegisters = M_MMIO_BLT_AUX_TABLE_BASE_LOW;
+            break;
+        case MHW_MMIO_BLT_AUX_TABLE_BASE_HIGH:
+            mmioRegisters = M_MMIO_BLT_AUX_TABLE_BASE_HIGH;
+            break;
         default:
             MHW_ASSERTMESSAGE("Invalid mmio data provided");;
             break;
@@ -288,10 +294,8 @@ public:
         return MOS_STATUS_SUCCESS;
     }
 
-    MOS_STATUS SetWatchdogTimerThreshold(uint32_t frameWidth, uint32_t frameHeight, bool isEncoder) override
+    MOS_STATUS SetWatchdogTimerThreshold(uint32_t frameWidth, uint32_t frameHeight, bool isEncoder, uint32_t codecMode) override
     {
-        MEDIA_WA_TABLE *waTable = nullptr;
-
         MHW_FUNCTION_ENTER;
         MHW_MI_CHK_NULL(this->m_osItf);
         if (this->m_osItf->bMediaReset == false ||
@@ -299,9 +303,6 @@ public:
         {
             return MOS_STATUS_SUCCESS;
         }
-
-        waTable = this->m_osItf->pfnGetWaTable(this->m_osItf);
-        MHW_CHK_NULL_RETURN(waTable);
 
         if (isEncoder)
         {
@@ -335,6 +336,13 @@ public:
             else
             {
                 MediaResetParam.watchdogCountThreshold = MHW_MI_DECODER_720P_WATCHDOG_THRESHOLD_IN_MS;
+            }
+
+            if ((CODECHAL_STANDARD)codecMode == CODECHAL_AV1)
+            {
+                // This is temporary solution to address the inappropriate threshold setting for high bit-rate AV1 decode.
+                // The final solution will incorporate bitstream size, increasing the setting when the bit-rate is high.
+                MediaResetParam.watchdogCountThreshold = MHW_MI_DECODER_AV1_WATCHDOG_THRESHOLD_IN_MS;
             }
         }
 
@@ -1026,7 +1034,35 @@ public:
         return MOS_STATUS_SUCCESS;
     }
 
-MEDIA_CLASS_DEFINE_END(mhw__mi__xe_lpm_plus_base_next__Impl)
+    MOS_STATUS AddBLTMMIOPrologCmd(
+        PMOS_COMMAND_BUFFER cmdBuffer) override
+    {
+        MOS_STATUS eStatus          = MOS_STATUS_SUCCESS;
+        uint64_t   auxTableBaseAddr = 0;
+
+        MHW_CHK_NULL_RETURN(cmdBuffer);
+        MHW_CHK_NULL_RETURN(this->m_osItf);
+
+        auxTableBaseAddr = this->m_osItf->pfnGetAuxTableBaseAddr(this->m_osItf);
+
+        if (auxTableBaseAddr)
+        {
+            auto &par      = MHW_GETPAR_F(MI_LOAD_REGISTER_IMM)();
+            par            = {};
+            par.dwData     = (auxTableBaseAddr & 0xffffffff);
+            par.dwRegister = GetMmioInterfaces(mhw::mi::MHW_MMIO_BLT_AUX_TABLE_BASE_LOW);
+            MHW_ADDCMD_F(MI_LOAD_REGISTER_IMM)
+            (cmdBuffer);
+
+            par.dwData     = ((auxTableBaseAddr >> 32) & 0xffffffff);
+            par.dwRegister = GetMmioInterfaces(mhw::mi::MHW_MMIO_BLT_AUX_TABLE_BASE_HIGH);
+            MHW_ADDCMD_F(MI_LOAD_REGISTER_IMM)
+            (cmdBuffer);
+        }
+
+        return eStatus;
+    }
+    MEDIA_CLASS_DEFINE_END(mhw__mi__xe_lpm_plus_base_next__Impl)
 };
 
 }  // namespace xe_lpm_plus_base

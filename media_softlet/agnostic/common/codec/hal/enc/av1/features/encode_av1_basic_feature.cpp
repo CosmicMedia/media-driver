@@ -83,7 +83,9 @@ MOS_STATUS Av1BasicFeature::Init(void *setting)
         outValue,
         "AV1 Encode Adaptive Rounding Enable",
         MediaUserSetting::Group::Sequence);
-    m_adaptiveRounding = outValue.Get<bool>();
+    bool adaptiveRounding = outValue.Get<bool>();
+    if (adaptiveRounding)
+        m_roundingMethod = RoundingMethod::adaptiveRounding;
 #endif
     return MOS_STATUS_SUCCESS;
 }
@@ -137,7 +139,7 @@ MOS_STATUS Av1BasicFeature::Update(void *params)
         // The lock operation will bring functional issue under "asyc != 1" condition, as well as pref issue need to be considered.
         // So we choose to by default disable adaptive rounding for CQP, but for BRC, statistics read operation will move to HuC. it's all 
         // fine by nature. so we will open adaptive rounding for BRC all the time as it will bring quality gain.
-        m_adaptiveRounding = true;
+        m_roundingMethod = RoundingMethod::adaptiveRounding;
     }
 
     for (uint32_t i = 0; i < m_NumNalUnits; i++)
@@ -668,7 +670,7 @@ MHW_SETPAR_DECL_SRC(VDENC_PIPE_MODE_SELECT, Av1BasicFeature)
         params.tileBasedReplayMode = true;
     }
 
-    params.frameStatisticsStreamOut = IsRateControlBrc(m_av1SeqParams->RateControlMethod) || m_adaptiveRounding;
+    params.frameStatisticsStreamOut = IsRateControlBrc(m_av1SeqParams->RateControlMethod) || m_roundingMethod == RoundingMethod::adaptiveRounding;
 
     return MOS_STATUS_SUCCESS;
 }
@@ -725,13 +727,13 @@ MHW_SETPAR_DECL_SRC(VDENC_REF_SURFACE_STATE, Av1BasicFeature)
         {
             params.pitch = m_reconSurface.dwPitch / 4;
         }
-        params.uOffset = m_rawSurfaceToPak->dwHeight;
-        params.vOffset = m_rawSurfaceToPak->dwHeight << 1;
+        params.uOffset = MOS_ALIGN_CEIL(m_rawSurfaceToPak->dwHeight, 8);
+        params.vOffset = MOS_ALIGN_CEIL(m_rawSurfaceToPak->dwHeight, 8) << 1;
     }
     else if (m_reconSurface.Format == Format_Y216 || m_reconSurface.Format == Format_Y210 || m_reconSurface.Format == Format_YUY2)
     {
-        params.uOffset = m_rawSurfaceToPak->dwHeight;
-        params.vOffset = m_rawSurfaceToPak->dwHeight;
+        params.uOffset = MOS_ALIGN_CEIL(m_rawSurfaceToPak->dwHeight, 8);
+        params.vOffset = MOS_ALIGN_CEIL(m_rawSurfaceToPak->dwHeight, 8);
     }
 
     return MOS_STATUS_SUCCESS;

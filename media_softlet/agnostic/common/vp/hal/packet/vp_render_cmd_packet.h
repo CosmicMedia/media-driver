@@ -61,17 +61,18 @@ public:
         VP_SURFACE_SETTING& surfSetting,
         VP_EXECUTE_CAPS packetCaps) override;
 
-    virtual MOS_STATUS SetDiFmdParams(PRENDER_DI_FMD_PARAMS params);
-
     virtual MOS_STATUS SetFcParams(PRENDER_FC_PARAMS params);
 
     virtual MOS_STATUS SetHdr3DLutParams(PRENDER_HDR_3DLUT_CAL_PARAMS params);
 
     virtual MOS_STATUS SetDnHVSParams(PRENDER_DN_HVS_CAL_PARAMS params);
 
+    virtual MOS_STATUS SetL0FcParams(PRENDER_L0_FC_PARAMS params);
+
     virtual MOS_STATUS DumpOutput() override;
 
     void PrintWalkerParas(MHW_WALKER_PARAMS &WalkerParams);
+    void PrintWalkerParas(MHW_GPGPU_WALKER_PARAMS &WalkerParams);
 
     virtual MOS_STATUS SetHdrParams(PRENDER_HDR_PARAMS params);
     virtual bool IsRenderUncompressedWriteNeeded(PVP_SURFACE VpSurface);

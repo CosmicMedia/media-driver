@@ -875,6 +875,25 @@ struct EncodeStatusReport
         uint32_t reserved[8];
     };
 
+    struct BLOCK_SSIM_INFO 
+    {
+        uint32_t NumBlockInColumns;
+        uint32_t NumBlockInRows;
+        uint8_t* BlockSsimArray; /*!< ssim per 4*4 piexl block. */
+        uint32_t reserved1[2];
+        uint64_t reserved2[2];   /*!< Reserved for future use. */
+    };
+
+    struct BLOCK_QUALITY_INFO
+    {
+        BLOCK_SSIM_INFO BlockSsim2DS;  /*!< for 2X DS ssim per 4*4 piexl block. */
+        BLOCK_SSIM_INFO BlockSsim4DS;  /*!< for 4X DS ssim per 4*4 piexl block. */
+        BLOCK_SSIM_INFO BlockSsim8DS;  /*!< for 8X DS ssim per 4*4 piexl block. */
+        BLOCK_SSIM_INFO BlockSsim16DS; /*!< for 16X DS ssim per 4*4 piexl block.*/
+        uint32_t        reserved1[32];
+        uint64_t        reserved2[12];
+    };
+
     CODECHAL_STATUS                 CodecStatus;            //!< Status for the picture associated with this status report
     uint32_t                        StatusReportNumber;     //!< Status report number associated with the picture in this status report provided in CodechalEncoderState::Execute()
     CODEC_PICTURE                   CurrOriginalPic;        //!< Uncompressed frame information for the picture associated with this status report
@@ -954,6 +973,8 @@ struct EncodeStatusReport
     uint32_t                        reserved[4];            //!< align with apo path hal structure EncodeStatusReportData
 
     uint32_t                        MSE[3];
+    
+    BLOCK_QUALITY_INFO*             pBlkQualityInfo;
 };
 
 //!
@@ -1406,6 +1427,8 @@ public:
     uint32_t                        m_frameHeight = 0;            //!< Frame height in luma samples
     uint32_t                        m_frameFieldHeight = 0;       //!< Frame height in luma samples
     uint32_t                        m_oriFrameHeight = 0;         //!< Original frame height
+    uint16_t                        m_frame_crop_bottom_offset = 0;       //!< frame_crop_bottom_offset
+    uint16_t                        m_frame_mbs_only_flag      = 0;         //!< frame_mbs_only_flag
     uint32_t                        m_oriFrameWidth = 0;          //!< Original frame width
     uint32_t                        m_createWidth = 0;            //!< Max Frame Width for resolution reset
     uint32_t                        m_createHeight = 0;           //!< Max Frame Height for resolution reset

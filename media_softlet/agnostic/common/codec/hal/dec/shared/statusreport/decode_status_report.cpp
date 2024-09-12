@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2023, Intel Corporation
+* Copyright (c) 2019-2024, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -48,6 +48,7 @@ namespace decode {
     {
         DECODE_FUNC_CALL();
 
+        SetSizeForStatusBuf();
         // Allocate status buffer which includes decode status and completed count
         uint32_t bufferSize = m_statusBufSizeMfx * m_statusNum + m_completedCountSize;
         m_statusBufMfx = m_allocator->AllocateBuffer(
@@ -222,6 +223,12 @@ namespace decode {
         return MOS_STATUS_SUCCESS;
     }
 
+    void DecodeStatusReport::SetSizeForStatusBuf()
+    {
+        m_statusBufSizeMfx = MOS_ALIGN_CEIL(sizeof(DecodeStatusMfx), sizeof(uint64_t));
+        m_statusBufSizeRcs = MOS_ALIGN_CEIL(sizeof(DecodeStatusRcs), sizeof(uint64_t));
+    }
+
     void DecodeStatusReport::SetOffsetsForStatusBuf()
     {
         const uint32_t mfxStatusOffset = 0;
@@ -289,7 +296,7 @@ namespace decode {
     {
         DECODE_FUNC_CALL();
 
-        if (m_statusBufMfx != nullptr)
+        if (m_allocator != nullptr && m_statusBufMfx != nullptr)
         {
             m_allocator->UnLock(m_statusBufMfx);
             m_allocator->Destroy(m_statusBufMfx);
@@ -297,7 +304,7 @@ namespace decode {
             m_completedCountBuf = nullptr;
         }
 
-        if (m_statusBufRcs != nullptr)
+        if (m_allocator != nullptr && m_statusBufRcs != nullptr)
         {
             m_allocator->UnLock(m_statusBufRcs);
             m_allocator->Destroy(m_statusBufRcs);

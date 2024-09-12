@@ -434,6 +434,13 @@ MOS_STATUS MosUserSetting::InitMosCommonUserSetting(MediaUserSettingSharedPtr us
         1,
         true); //"Enable texture pooling in media driver."
 
+    DeclareUserSettingKey(
+        userSettingPtr,
+        __MEDIA_USER_FEATURE_VALUE_MEDIA_NATIVE_FENCE_MODE,
+        MediaUserSetting::Group::Device,
+        0,
+        true);
+
     return MOS_STATUS_SUCCESS;
 }
 
@@ -918,6 +925,13 @@ MOS_STATUS MosUserSetting::InitUserSettingForDebug(MediaUserSettingSharedPtr use
         MediaUserSetting::Group::Device,
         1,
         true); //"If enabled, media reset will be enabled."
+
+    DeclareUserSettingKeyForDebug(
+        userSettingPtr,
+        __MEDIA_USER_FEATURE_VALUE_FORCE_MEDIA_COMPRESSED_WRITE,
+        MediaUserSetting::Group::Device,
+        0,
+        true); //"If enabled, then to disable Unifined CMF."
 
     DeclareUserSettingKeyForDebug(
         userSettingPtr,

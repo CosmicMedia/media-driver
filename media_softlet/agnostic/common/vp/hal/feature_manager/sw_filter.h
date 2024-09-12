@@ -84,7 +84,6 @@ enum FeatureType
     FeatureTypeDi                   = 0x500,
     FeatureTypeDiOnVebox            = FeatureTypeDi | FEATURE_TYPE_ENGINE_BITS_VEBOX,
     FeatureTypeDiOnRender           = FeatureTypeDi | FEATURE_TYPE_ENGINE_BITS_RENDER,
-    FeatureTypeDiFmdOnRender        = FeatureTypeDi | FEATURE_TYPE_ENGINE_BITS_RENDER | FEATURE_TYPE_ENGINE_BITS_SUB_STEP,
     FeatureTypeSte                  = 0x600,
     FeatureTypeSteOnVebox           = FeatureTypeSte | FEATURE_TYPE_ENGINE_BITS_VEBOX,
     FeatureTypeVeboxUpdate          = 0x700,
@@ -375,6 +374,8 @@ public:
         m_isInExePipe = isInExePipe;
     }
 
+    VP_MHWINTERFACE* GetHwInterface();
+
 protected:
     VpInterface &m_vpInterface;
     FeatureType m_type = FeatureTypeInvalid;
@@ -445,6 +446,7 @@ struct FeatureParamScaling : public FeatureParam
     {
         uint32_t                dwWidth  = 0;
         uint32_t                dwHeight = 0;
+        uint32_t                dwPitch  = 0;
         RECT                    rcSrc    = {0, 0, 0, 0};
         RECT                    rcDst    = {0, 0, 0, 0};  //!< Input dst rect without rotate being applied.
         RECT                    rcMaxSrc = {0, 0, 0, 0};
@@ -652,7 +654,6 @@ struct FeatureParamDeinterlace : public FeatureParam
     bool                    bHDContent           = false;
     PVPHAL_DI_PARAMS        diParams             = nullptr;
     bool                    bFmdExtraVariance    = false;     //!< Check if extra FMD variances need to be calculated
-    bool                    bFmdKernelEnable     = false;     //!< FMD kernel path enabled
     bool                    bQueryVarianceEnable = false;     //!< Query variance enabled
     uint32_t                heightInput          = 0;
     RECT                    rcSrc                = {0, 0, 0, 0};
@@ -677,10 +678,10 @@ public:
     }
     virtual MOS_STATUS AddFeatureGraphRTLog()
     {
-        MT_LOG5(MT_VP_FEATURE_GRAPH_SWFILTERDEINTERLACE, MT_NORMAL, MT_VP_FEATURE_GRAPH_FILTER_SAMPLETYPEINPUT, m_Params.sampleTypeInput, MT_VP_FEATURE_GRAPH_FILTER_FMDKERNELENABLE, m_Params.bFmdKernelEnable,
-                MT_VP_FEATURE_GRAPH_FILTER_SINGLEFIELD, m_Params.diParams ? m_Params.diParams->bSingleField : -1, MT_VP_FEATURE_GRAPH_FILTER_DIMODE, m_Params.diParams ? m_Params.diParams->DIMode : -1,
-                MT_VP_FEATURE_GRAPH_FILTER_FEATURETYPE, GetFeatureType());
-        VP_PUBLIC_NORMALMESSAGE("Feature Graph: SwFilterDeinterlace: sampleTypeInput %d, bFmdKernelEnable %d, bSingleField %d, DIMode %d, FeatureType %d", m_Params.sampleTypeInput, m_Params.bFmdKernelEnable,
+        MT_LOG4(MT_VP_FEATURE_GRAPH_SWFILTERDEINTERLACE, MT_NORMAL, MT_VP_FEATURE_GRAPH_FILTER_SAMPLETYPEINPUT, m_Params.sampleTypeInput,
+                 MT_VP_FEATURE_GRAPH_FILTER_SINGLEFIELD, m_Params.diParams ? m_Params.diParams->bSingleField : -1, MT_VP_FEATURE_GRAPH_FILTER_DIMODE, m_Params.diParams ? m_Params.diParams->DIMode : -1,
+                 MT_VP_FEATURE_GRAPH_FILTER_FEATURETYPE, GetFeatureType());
+        VP_PUBLIC_NORMALMESSAGE("Feature Graph: SwFilterDeinterlace: sampleTypeInput %d, bSingleField %d, DIMode %d, FeatureType %d", m_Params.sampleTypeInput,
                                 m_Params.diParams ? m_Params.diParams->bSingleField : -1, m_Params.diParams ? m_Params.diParams->DIMode : -1, GetFeatureType());
         return MOS_STATUS_SUCCESS;
     }
@@ -876,12 +877,14 @@ struct FeatureParamHdr : public FeatureParam
     VPHAL_HDR_LUT_MODE lutMode                                              = VPHAL_HDR_LUT_MODE_NONE; //!< LUT Mode
     VPHAL_HDR_LUT_MODE globalLutMode                                        = VPHAL_HDR_LUT_MODE_NONE; //!< Global LUT mode control for debugging purpose
     bool               bGpuGenerate3DLUT                                    = false;               //!< Flag for per frame GPU generation of 3DLUT
+    bool               is3DLutKernelOnly                                    = false;
 
     PVPHAL_COLORFILL_PARAMS pColorFillParams                     = nullptr;               //!< ColorFill - BG only
     bool                    bDisableAutoMode                     = false;                 //!< Force to disable Hdr auto mode tone mapping for debugging purpose
     uint32_t                uiSplitFramePortions                 = 1;                     //!< Split Frame flag
     bool                    bForceSplitFrame                     = false;
     bool                    bNeed3DSampler                       = false;                 //!< indicate whether 3D should neede by force considering AVS removal etc.
+    bool                    isL0KernelEnabled                    = false;
 
     HDR_PARAMS srcHDRParams    = {};
     HDR_PARAMS targetHDRParams = {};

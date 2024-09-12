@@ -1195,8 +1195,8 @@ static int __mos_vm_bind_xe(int fd, uint32_t vm_id, uint32_t exec_queue_id, uint
     ret = drmIoctl(fd, DRM_IOCTL_XE_VM_BIND, &bind);
     if (ret)
     {
-        MOS_DRM_ASSERTMESSAGE("Failed to bind vm, vm_id:%d, exec_queue_id:%d, op:0x%x, flags:0x%x, bo_handle:%d, offset:%lx, addr:0x%lx, size:%ld, errno(%d)",
-            vm_id, exec_queue_id, op, bo_handle, offset, addr, size, -errno);
+        MOS_DRM_ASSERTMESSAGE("Failed to bind vm, vm_id:%d, exec_queue_id:%d, op:0x%x, flags:0x%x, bo_handle:%d, offset:%lx, addr:0x%lx, size:%ld, pat_index:%d, errno(%d)",
+            vm_id, exec_queue_id, op, flags, bo_handle, offset, addr, size, pat_index, -errno);
     }
 
     return ret;
@@ -1535,12 +1535,15 @@ mos_bo_alloc_userptr_xe(struct mos_bufmgr *bufmgr,
 }
 
 static struct mos_linux_bo *
-mos_bo_create_from_prime_xe(struct mos_bufmgr *bufmgr, int prime_fd, int size)
+mos_bo_create_from_prime_xe(struct mos_bufmgr *bufmgr, struct mos_drm_bo_alloc_prime *alloc_prime)
 {
     struct mos_xe_bufmgr_gem *bufmgr_gem = (struct mos_xe_bufmgr_gem *) bufmgr;
     int ret;
     uint32_t handle;
     struct mos_xe_bo_gem *bo_gem;
+    int prime_fd = alloc_prime->prime_fd;
+    int size = alloc_prime->size;
+    uint16_t pat_index = alloc_prime->pat_index;
     drmMMListHead *list;
 
     bufmgr_gem->m_lock.lock();
@@ -1597,16 +1600,18 @@ mos_bo_create_from_prime_xe(struct mos_bufmgr *bufmgr, int prime_fd, int size)
 
     bo_gem->bo.handle = handle;
     /*
-     * Note, currectly there is no cpu_caching and pat_index for external-imported bo, hard code for it.
-     * Need to get the pat_index by the customer_gmminfo with 1way coherency at least later.
+     * Note: Need to get the pat_index by the customer_gmminfo with 1way coherency at least.
      */
-    bo_gem->pat_index = 1; //Note need to hard code a pat_index with 1way coherency at least
+    bo_gem->pat_index = pat_index == PAT_INDEX_INVALID ? 0 : pat_index;
     bo_gem->bo.bufmgr = bufmgr;
 
     bo_gem->gem_handle = handle;
     atomic_set(&bo_gem->ref_count, 1);
 
-    memcpy(bo_gem->name, "prime", sizeof("prime"));
+    /**
+     * change bo_gem->name to const char*
+     */
+    memcpy(bo_gem->name, alloc_prime->name, sizeof("prime"));
     bo_gem->mem_region = MEMZONE_PRIME;
 
     DRMLISTADDTAIL(&bo_gem->name_list, &bufmgr_gem->named);
@@ -2762,6 +2767,10 @@ void mos_select_fixed_engine_xe(struct mos_bufmgr *bufmgr,
 
 }
 
+
+/**
+ * Note: xe kmd doesn't support query blob before dg2.
+ */
 static uint32_t *
 __mos_query_hw_config_xe(int fd)
 {
@@ -2830,20 +2839,22 @@ mos_query_device_blob_xe(struct mos_bufmgr *bufmgr, MEDIA_SYSTEM_INFO* gfx_info)
             gfx_info->MaxSlicesSupported = hwconfig[i+2];
         }
 
-        if (INTEL_HWCONFIG_MAX_DUAL_SUBSLICES_SUPPORTED == hwconfig[i])
+        if ((INTEL_HWCONFIG_MAX_DUAL_SUBSLICES_SUPPORTED == hwconfig[i])
+            || (INTEL_HWCONFIG_MAX_SUBSLICE == hwconfig[i]))
         {
             assert(hwconfig[i+1] == 1);
             gfx_info->SubSliceCount = hwconfig[i+2];
             gfx_info->MaxSubSlicesSupported = hwconfig[i+2];
         }
 
-        if (INTEL_HWCONFIG_MAX_NUM_EU_PER_DSS == hwconfig[i])
+        if ((INTEL_HWCONFIG_MAX_NUM_EU_PER_DSS == hwconfig[i])
+            || (INTEL_HWCONFIG_MAX_EU_PER_SUBSLICE == hwconfig[i]))
         {
             assert(hwconfig[i+1] == 1);
             gfx_info->MaxEuPerSubSlice = hwconfig[i+2];
         }
 
-        if (INTEL_HWCONFIG_L3_CACHE_SIZE_IN_KB == hwconfig[i])
+        if (INTEL_HWCONFIG_DEPRECATED_L3_CACHE_SIZE_IN_KB == hwconfig[i])
         {
             assert(hwconfig[i+1] == 1);
             gfx_info->L3CacheSizeInKb = hwconfig[i+2];
@@ -3179,13 +3190,20 @@ mos_get_driver_info_xe(struct mos_bufmgr *bufmgr, struct LinuxDriverInfo *drvInf
     //For XE driver always has ppgtt
     drvInfo->hasPpgtt = 1;
 
-    //query blob
-    MOS_DRM_CHK_XE_DEV(dev, hw_config, __mos_query_hw_config_xe, -ENODEV)
-    uint32_t *hw_config = &dev->hw_config[1];
-    uint32_t num_config = dev->hw_config[0];
-
-    if (hw_config)
+    /**
+     * query blob
+     * Note: xe kmd doesn't support query blob before dg2, so don't check null and return here.
+     */
+    if (dev->hw_config == nullptr)
     {
+        dev->hw_config = __mos_query_hw_config_xe(fd);
+    }
+
+    if (dev->hw_config)
+    {
+        uint32_t *hw_config = &dev->hw_config[1];
+        uint32_t num_config = dev->hw_config[0];
+
         while (i < num_config)
         {
             /* Attribute ID starts with 1 */
@@ -3200,13 +3218,15 @@ mos_get_driver_info_xe(struct mos_bufmgr *bufmgr, struct LinuxDriverInfo *drvInf
                 drvInfo->sliceCount = hw_config[i+2];
             }
 
-            if (INTEL_HWCONFIG_MAX_DUAL_SUBSLICES_SUPPORTED == hw_config[i])
+            if ((INTEL_HWCONFIG_MAX_DUAL_SUBSLICES_SUPPORTED == hw_config[i])
+                || (INTEL_HWCONFIG_MAX_SUBSLICE == hw_config[i]))
             {
                 assert(hw_config[i+1] == 1);
                 drvInfo->subSliceCount = hw_config[i+2];
             }
 
-            if (INTEL_HWCONFIG_MAX_NUM_EU_PER_DSS == hw_config[i])
+            if ((INTEL_HWCONFIG_MAX_NUM_EU_PER_DSS == hw_config[i])
+                || (INTEL_HWCONFIG_MAX_EU_PER_SUBSLICE == hw_config[i]))
             {
                 assert(hw_config[i+1] == 1);
                 MaxEuPerSubSlice = hw_config[i+2];

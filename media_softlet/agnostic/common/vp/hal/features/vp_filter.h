@@ -161,6 +161,8 @@ struct _SFC_SCALING_PARAMS
     uint32_t                        interlacedScalingType;
     VPHAL_SAMPLE_TYPE               srcSampleType;
     VPHAL_SAMPLE_TYPE               dstSampleType;
+    bool                            isDemosaicNeeded;                           // 0: demosaic is not needed; 1: demosaic is needed
+    bool                            b1stPassOfSfc2PassScaling;                  // 1st Pass of Sfc 2Pass Scaling
 };
 
 struct _SFC_CSC_PARAMS
@@ -179,6 +181,7 @@ struct _SFC_CSC_PARAMS
     uint32_t                        chromaDownSamplingVerticalCoef;              // Chroma DownSampling Vertical Coeff
     uint32_t                        chromaDownSamplingHorizontalCoef;            // Chroma DownSampling Horizontal Coeff
     bool                            isFullRgbG10P709;                            // Whether output colorspace is DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+    bool                            isDemosaicNeeded;                            // 0: demosaic is not needed; 1: demosaic is needed       
 };
 
 struct _SFC_ROT_MIR_PARAMS
@@ -357,6 +360,8 @@ struct _RENDER_HDR_3DLUT_CAL_PARAMS
     VpKernelID                      kernelId;
     uint32_t                        threadWidth;
     uint32_t                        threadHeight;
+    uint32_t                        localWidth;
+    uint32_t                        localHeight;
     KERNEL_ARGS                     kernelArgs;
     void                            Init();
 };
@@ -448,18 +453,6 @@ struct CHROMA_LAYER_PARAMS
     uint32_t                                          uThreadHeight;
 };
 
-struct _RENDER_DI_FMD_PARAMS
-{
-    bool                  bEnableDiFmd;
-    uint32_t              uKernelID;
-    uint32_t              dwVeboxPerBlockStatisticsHeight;
-    uint32_t              dwVeboxPerBlockStatisticsWidth;
-    VpKernelID            kernelId;
-};
-
-using RENDER_DI_FMD_PARAMS  = _RENDER_DI_FMD_PARAMS;
-using PRENDER_DI_FMD_PARAMS = RENDER_DI_FMD_PARAMS *;
-
 struct _RENDER_FC_PARAMS
 {
     VpKernelID              kernelId;
@@ -467,6 +460,35 @@ struct _RENDER_FC_PARAMS
 };
 using RENDER_FC_PARAMS  = _RENDER_FC_PARAMS;
 using PRENDER_FC_PARAMS = RENDER_FC_PARAMS *;
+
+
+struct L0_FC_KERNEL_CONFIG
+{
+    VPHAL_PERFTAG perfTag = VPHAL_NONE;
+};
+
+struct L0_FC_KERNEL_PARAM
+{
+    KERNEL_ARGS                  kernelArgs;
+    std::string                  kernelName;
+    VpKernelID                   kernelId;
+    uint32_t                     threadWidth;
+    uint32_t                     threadHeight;
+    uint32_t                     localWidth;
+    uint32_t                     localHeight;
+    KERNEL_ARG_INDEX_SURFACE_MAP kernelStatefulSurfaces;
+    L0_FC_KERNEL_CONFIG          kernelConfig;
+    void                         Init();
+};
+
+using L0_FC_KERNEL_PARAMS = std::vector<L0_FC_KERNEL_PARAM>;
+struct _RENDER_L0_FC_PARAMS
+{
+    L0_FC_KERNEL_PARAMS fc_kernelParams = {};
+    void                Init();
+};
+using RENDER_L0_FC_PARAMS  = _RENDER_L0_FC_PARAMS;
+using PRENDER_L0_FC_PARAMS = RENDER_L0_FC_PARAMS *;
 
 struct _RENDER_HDR_PARAMS
 {
@@ -603,7 +625,7 @@ public:
     virtual MOS_STATUS UpdateUnusedFeature(VP_EXECUTE_CAPS caps, SwFilter &feature, SwFilterPipe &featurePipe, SwFilterPipe &executePipe, bool isInputPipe, int index);
     FeatureType GetType();
     HwFilterParameter *GetHwFeatureParameterFromPool();
-    MOS_STATUS ReleaseHwFeatureParameter(HwFilterParameter *&pParam);
+    virtual MOS_STATUS ReleaseHwFeatureParameter(HwFilterParameter *&pParam);
 protected:
     FeatureType m_Type = FeatureTypeInvalid;
     std::vector<HwFilterParameter *> m_Pool;

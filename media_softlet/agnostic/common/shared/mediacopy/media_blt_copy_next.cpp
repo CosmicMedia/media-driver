@@ -29,12 +29,13 @@
 #include <algorithm>
 #include "media_perf_profiler.h"
 #include "media_blt_copy_next.h"
+#include "mos_os_cp_interface_specific.h"
+#include "renderhal.h"
 #define BIT( n )                            ( 1 << (n) )
 
 #ifdef min
 #undef min
 #endif
-
 //!
 //! \brief    BltStateNext constructor
 //! \details  Initialize the BltStateNext members.
@@ -645,7 +646,6 @@ MOS_STATUS BltStateNext::CopyMainSurface(
     BLT_CHK_NULL_RETURN(dst);
     BLT_CHK_NULL_RETURN(src->pGmmResInfo);
     BLT_CHK_NULL_RETURN(dst->pGmmResInfo);
-    MOS_TraceEventExt(EVENT_MEDIA_COPY, EVENT_TYPE_START, nullptr, 0, nullptr, 0);
 
     MOS_ZeroMemory(&BltStateNextParam, sizeof(BLT_STATE_PARAM));
     BltStateNextParam.bCopyMainSurface = true;
@@ -655,8 +655,7 @@ MOS_STATUS BltStateNext::CopyMainSurface(
     // A workaround for oversized buffers.
     // BLOCK_COPY_BLT can only receive (width-1) of up to 14 bits.
     // The width of the internal buffer of a staging texture may exceed that limit.
-    if (m_blokCopyon &&
-        (src->pGmmResInfo->GetResourceType() == RESOURCE_BUFFER) &&
+    if ((src->pGmmResInfo->GetResourceType() == RESOURCE_BUFFER) &&
         (dst->pGmmResInfo->GetResourceType() == RESOURCE_BUFFER) &&
         ((src->pGmmResInfo->GetBaseWidth() > MAX_BLT_BLOCK_COPY_WIDTH) || (dst->pGmmResInfo->GetBaseWidth() > MAX_BLT_BLOCK_COPY_WIDTH)))
     {
@@ -667,7 +666,6 @@ MOS_STATUS BltStateNext::CopyMainSurface(
         BLT_CHK_STATUS_RETURN(SubmitCMD(&BltStateNextParam));
     }
 
-    MOS_TraceEventExt(EVENT_MEDIA_COPY, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return MOS_STATUS_SUCCESS;
 
 }
@@ -681,6 +679,8 @@ MOS_STATUS BltStateNext::CopyMainSurface(
 //!           [in] Pointer to input surface
 //! \param    outputSurface
 //!           [in] Pointer to output surface
+//! \param    planeIndex
+//!           [in] Pointer to YUV(RGB) plane index
 //! \return   MOS_STATUS
 //!           Return MOS_STATUS_SUCCESS if successful, otherwise failed
 //!
@@ -693,9 +693,7 @@ MOS_STATUS BltStateNext::SetupBltCopyParam(
     BLT_CHK_NULL_RETURN(pMhwBltParams);
     BLT_CHK_NULL_RETURN(inputSurface);
     BLT_CHK_NULL_RETURN(outputSurface);
-    BLT_CHK_NULL_RETURN(outputSurface->pGmmResInfo);
 
-    uint32_t          BytesPerTexel = 1;
     MOS_SURFACE       ResDetails;
     MOS_ZeroMemory(&ResDetails, sizeof(MOS_SURFACE));
     MOS_ZeroMemory(pMhwBltParams, sizeof(MHW_FAST_COPY_BLT_PARAM));
@@ -707,7 +705,7 @@ MOS_STATUS BltStateNext::SetupBltCopyParam(
     uint32_t inputPitch  = ResDetails.dwPitch;
 
     if (inputSurface->TileType != MOS_TILE_LINEAR)
-    { 
+    { //for tiled surfaces, pitch is expressed in DWORDs
         pMhwBltParams->dwSrcPitch = ResDetails.dwPitch / 4;
     }
     else
@@ -727,7 +725,7 @@ MOS_STATUS BltStateNext::SetupBltCopyParam(
     uint32_t outputPitch  = ResDetails.dwPitch;
 
     if (outputSurface->TileType != MOS_TILE_LINEAR)
-    {
+    {// for tiled surfaces, pitch is expressed in DWORDs
         pMhwBltParams->dwDstPitch = ResDetails.dwPitch/4;
     }
     else
@@ -738,48 +736,43 @@ MOS_STATUS BltStateNext::SetupBltCopyParam(
     pMhwBltParams->dwDstLeft   = ResDetails.RenderOffset.YUV.Y.XOffset;
 
     int planeNum = GetPlaneNum(ResDetails.Format);
-    pMhwBltParams->dwDstRight = std::min(inputWidth, outputWidth);
+    pMhwBltParams->dwPlaneIndex = planeIndex;
+    pMhwBltParams->dwPlaneNum   = planeNum;
 
-    if (outputSurface->pGmmResInfo->GetResourceType() != RESOURCE_BUFFER)
+    // some upper layer has overwrite the format, so need get orignal BitsPerBlock
+    BLT_CHK_NULL_RETURN(inputSurface->pGmmResInfo);
+    BLT_CHK_NULL_RETURN(outputSurface->pGmmResInfo);
+    uint32_t inputBitsPerPixel  = inputSurface->pGmmResInfo->GetBitsPerPixel();
+    uint32_t outputBitsPerPixel = outputSurface->pGmmResInfo->GetBitsPerPixel();
+    uint32_t BitsPerPixel = 8;
+    if (inputSurface->TileType != MOS_TILE_LINEAR)
     {
-        BytesPerTexel = outputSurface->pGmmResInfo->GetBitsPerPixel() / 8;  // using Bytes.
-
-        if (ResDetails.Format == Format_P010 || ResDetails.Format == Format_P016)
-        {
-            BytesPerTexel = 2;
-        }
+        BitsPerPixel = inputBitsPerPixel;
     }
-
-    if (true == m_blokCopyon)
+    else if (outputSurface->TileType != MOS_TILE_LINEAR)
     {
-        pMhwBltParams->dwColorDepth = GetBlkCopyColorDepth(outputSurface->pGmmResInfo->GetResourceFormat(), BytesPerTexel);
+        BitsPerPixel = outputBitsPerPixel;
     }
     else
     {
-        pMhwBltParams->dwColorDepth = GetFastCopyColorDepth(outputSurface->pGmmResInfo->GetResourceFormat(), BytesPerTexel);
+        // both input and output are linear surfaces.
+        // upper layer overwrite the format from buffer to 2D surfaces. Then the BitsPerPixel may different.
+        BitsPerPixel = inputBitsPerPixel >= outputBitsPerPixel ? inputBitsPerPixel : outputBitsPerPixel;
     }
+    MCPY_NORMALMESSAGE("input BitsPerBlock %d, output BitsPerBlock %d, the vid mem BitsPerBlock %d",
+        inputBitsPerPixel,
+        outputBitsPerPixel,
+        BitsPerPixel);
+    pMhwBltParams->dwColorDepth = GetBlkCopyColorDepth(outputSurface->pGmmResInfo->GetResourceFormat(), BitsPerPixel);
+    pMhwBltParams->dwDstRight   = std::min(inputWidth, outputWidth);
+    pMhwBltParams->dwDstBottom  = std::min(inputHeight, outputHeight);
 
-    if( 1 == planeNum )
-    {// handle as whole memory
-       pMhwBltParams->dwDstBottom = std::min(inputHeight, outputHeight);
-       if (false == m_blokCopyon)
-       {// fastcopy
-           pMhwBltParams->dwDstRight   = std::min(inputPitch, outputPitch) / 4;  // Regard as 32 bit per pixel format, i.e. 4 byte per pixel.
-           pMhwBltParams->dwColorDepth = 3;  //0:8bit 1:16bit 3:32bit 4:64bit
-       }
-       else
-       {
-           // Block copy
-           pMhwBltParams->dwDstRight = std::min(inputPitch, outputPitch) / 4;  // Regard as 32 bit per pixel format, i.e. 4 byte per pixel.
-           pMhwBltParams->dwColorDepth = 2;  //0:8bit 1:16bit 2:32bit
-       }
-    }
-    else
+    // The 2nd and 3nd layer.
+    if (planeNum == TWO_PLANES || planeNum == THREE_PLANES)
     {
         int bytePerTexelScaling    = GetBytesPerTexelScaling(ResDetails.Format);
-        pMhwBltParams->dwDstBottom = std::min(inputHeight, outputHeight);
 
-        if (1 == planeIndex || 2 == planeIndex)
+        if (MCPY_PLANE_U == planeIndex || MCPY_PLANE_V == planeIndex)
         {
            pMhwBltParams->dwDstBottom = pMhwBltParams->dwDstBottom / bytePerTexelScaling;
            if (ResDetails.Format == Format_I420 || ResDetails.Format == Format_YV12)
@@ -793,8 +786,8 @@ MOS_STATUS BltStateNext::SetupBltCopyParam(
     }
     pMhwBltParams->pSrcOsResource = inputSurface;
     pMhwBltParams->pDstOsResource = outputSurface;
-    MCPY_NORMALMESSAGE("BLT params: m_blokCopyon = %d, format %d, planeNum %d, planeIndex %d, dwColorDepth %d, dwSrcTop %d, dwSrcLeft %d, dwSrcPitch %d,"
-                       "dwDstTop %d, dwDstLeft %d, dwDstRight %d, dwDstBottom %d, dwDstPitch %d", m_blokCopyon,
+    MCPY_NORMALMESSAGE("BLT params:format %d, planeNum %d, planeIndex %d, dwColorDepth %d, dwSrcTop %d, dwSrcLeft %d, dwSrcPitch %d,"
+                       "dwDstTop %d, dwDstLeft %d, dwDstRight %d, dwDstBottom %d, dwDstPitch %d",
                        ResDetails.Format, planeNum, planeIndex, pMhwBltParams->dwColorDepth, pMhwBltParams->dwSrcTop, pMhwBltParams->dwSrcLeft,
                        pMhwBltParams->dwSrcPitch, pMhwBltParams->dwDstTop, pMhwBltParams->dwDstLeft, pMhwBltParams->dwDstRight, 
                        pMhwBltParams->dwDstBottom, pMhwBltParams->dwDstPitch);
@@ -822,7 +815,16 @@ MOS_STATUS BltStateNext::SubmitCMD(
 
     BLT_CHK_NULL_RETURN(m_miItf);
     BLT_CHK_NULL_RETURN(m_bltItf);
-
+    BLT_CHK_NULL_RETURN(pBltStateParam);
+    BLT_CHK_NULL_RETURN(m_osInterface);
+    // need consolidate both input/output surface information to decide cp context.
+    PMOS_RESOURCE surfaceArray[2];
+    surfaceArray[0] = pBltStateParam->pSrcSurface;
+    surfaceArray[1] = pBltStateParam->pDstSurface;
+    if (m_osInterface->osCpInterface)
+    {
+        m_osInterface->osCpInterface->PrepareResources((void **)&surfaceArray, sizeof(surfaceArray) / sizeof(PMOS_RESOURCE), nullptr, 0);
+    }
     // no gpucontext will be created if the gpu context has been created before.
     BLT_CHK_STATUS_RETURN(m_osInterface->pfnCreateGpuContext(
         m_osInterface,
@@ -839,6 +841,7 @@ MOS_STATUS BltStateNext::SubmitCMD(
     // Initialize the command buffer struct
     MOS_ZeroMemory(&cmdBuffer, sizeof(MOS_COMMAND_BUFFER));
     BLT_CHK_STATUS_RETURN(m_osInterface->pfnGetCommandBuffer(m_osInterface, &cmdBuffer, 0));
+    BLT_CHK_STATUS_RETURN(SetPrologParamsforCmdbuffer(&cmdBuffer));
 
     MOS_SURFACE       srcResDetails;
     MOS_SURFACE       dstResDetails;
@@ -866,91 +869,43 @@ MOS_STATUS BltStateNext::SubmitCMD(
             &fastCopyBltParam,
             pBltStateParam->pSrcSurface,
             pBltStateParam->pDstSurface,
-            0));
+            MCPY_PLANE_Y));
 
-        auto& Register = m_miItf->MHW_GETPAR_F(MI_LOAD_REGISTER_IMM)();
-        Register = {};
-        Register.dwRegister = mhw_blt_state::BCS_SWCTRL_XE::REGISTER_OFFSET;
-        mhw_blt_state::BCS_SWCTRL_XE swctrl;
-        if (pBltStateParam->pSrcSurface->TileType != MOS_TILE_LINEAR)
-        {
-            swctrl.DW0.Tile4Source = 1;
-        }
-        if (pBltStateParam->pDstSurface->TileType != MOS_TILE_LINEAR)
-        {//output tiled
-            swctrl.DW0.Tile4Destination = 1;
-        }
-        Register.dwData = swctrl.DW0.Value;
-        BLT_CHK_STATUS_RETURN(m_miItf->MHW_ADDCMD_F(MI_LOAD_REGISTER_IMM)(&cmdBuffer));
+        BLT_CHK_STATUS_RETURN(SetBCSSWCTR(&cmdBuffer));
+        BLT_CHK_STATUS_RETURN(m_miItf->AddBLTMMIOPrologCmd(&cmdBuffer));
+        BLT_CHK_STATUS_RETURN(m_bltItf->AddBlockCopyBlt(
+            &cmdBuffer,
+            &fastCopyBltParam,
+            srcResDetails.YPlaneOffset.iSurfaceOffset,
+            dstResDetails.YPlaneOffset.iSurfaceOffset));
 
-        if (m_blokCopyon)
-        {
-            BLT_CHK_STATUS_RETURN(m_bltItf->AddBlockCopyBlt(
-                &cmdBuffer,
-                &fastCopyBltParam,
-                srcResDetails.YPlaneOffset.iSurfaceOffset,
-                dstResDetails.YPlaneOffset.iSurfaceOffset));
-        }
-        else
-        {
-            BLT_CHK_STATUS_RETURN(m_bltItf->AddFastCopyBlt(
-                &cmdBuffer,
-                &fastCopyBltParam,
-                srcResDetails.YPlaneOffset.iSurfaceOffset,
-                dstResDetails.YPlaneOffset.iSurfaceOffset));
-        }
-        if (planeNum >= 2)
+        if (planeNum == TWO_PLANES || planeNum == THREE_PLANES)
         {
             BLT_CHK_STATUS_RETURN(SetupBltCopyParam(
              &fastCopyBltParam,
              pBltStateParam->pSrcSurface,
              pBltStateParam->pDstSurface,
-             1));
-            if (m_blokCopyon)
-            {
-                BLT_CHK_STATUS_RETURN(m_bltItf->AddBlockCopyBlt(
+             MCPY_PLANE_U));
+             BLT_CHK_STATUS_RETURN(m_bltItf->AddBlockCopyBlt(
                     &cmdBuffer,
                     &fastCopyBltParam,
                     srcResDetails.UPlaneOffset.iSurfaceOffset,
                     dstResDetails.UPlaneOffset.iSurfaceOffset));
-            }
-            else
-            {
-                BLT_CHK_STATUS_RETURN(m_bltItf->AddFastCopyBlt(
-                    &cmdBuffer,
-                    &fastCopyBltParam,
-                    srcResDetails.UPlaneOffset.iSurfaceOffset,
-                    dstResDetails.UPlaneOffset.iSurfaceOffset));
-            }
-            if (planeNum == 3)
+
+            if (planeNum == THREE_PLANES)
             {
                 BLT_CHK_STATUS_RETURN(SetupBltCopyParam(
                     &fastCopyBltParam,
                     pBltStateParam->pSrcSurface,
                     pBltStateParam->pDstSurface,
-                    2));
-                if (m_blokCopyon)
-                {
-                    BLT_CHK_STATUS_RETURN(m_bltItf->AddBlockCopyBlt(
-                        &cmdBuffer,
-                        &fastCopyBltParam,
-                        srcResDetails.VPlaneOffset.iSurfaceOffset,
-                        dstResDetails.VPlaneOffset.iSurfaceOffset));
-                }
-                else
-                {
-                    BLT_CHK_STATUS_RETURN(m_bltItf->AddFastCopyBlt(
-                        &cmdBuffer,
-                        &fastCopyBltParam,
-                        srcResDetails.VPlaneOffset.iSurfaceOffset,
-                        dstResDetails.VPlaneOffset.iSurfaceOffset));
-                }
+                    MCPY_PLANE_V));
+                BLT_CHK_STATUS_RETURN(m_bltItf->AddBlockCopyBlt(
+                    &cmdBuffer,
+                    &fastCopyBltParam,
+                    srcResDetails.VPlaneOffset.iSurfaceOffset,
+                    dstResDetails.VPlaneOffset.iSurfaceOffset));
             }
-            else if(planeNum > 3)
-            {
-                MCPY_ASSERTMESSAGE("illegal usage");
-                return MOS_STATUS_INVALID_PARAMETER;
-            }
+
          }
     }
     BLT_CHK_STATUS_RETURN(perfProfiler->AddPerfCollectEndCmd((void*)this, m_osInterface, m_miItf, &cmdBuffer));
@@ -978,79 +933,41 @@ MOS_STATUS BltStateNext::SubmitCMD(
 
 uint32_t BltStateNext::GetBlkCopyColorDepth(
     GMM_RESOURCE_FORMAT dstFormat,
-    uint32_t            BytesPerTexel)
+    uint32_t            BitsPerPixel)
 {
-    uint32_t bitsPerTexel = BytesPerTexel * BLT_BITS_PER_BYTE;
-
-    switch (bitsPerTexel)
+    if (dstFormat == GMM_FORMAT_YUY2_2x1 || dstFormat == GMM_FORMAT_Y216_TYPE || dstFormat == GMM_FORMAT_Y210)
+    {// GMM_FORMAT_YUY2_2x1 32bpe 2x1 pixel blocks instead of 16bpp 1x1 block
+     // GMM_FORMAT_Y216_TYPE/Y210 64bpe pixel blocks instead of 32bpp block.
+         BitsPerPixel = BitsPerPixel / 2;
+    }
+    switch (BitsPerPixel)
     {
-     case 8:
-         return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_8BITCOLOR;
-         break;
      case 16:
          switch (dstFormat)
          {
            case GMM_FORMAT_B5G5R5A1_UNORM:
                return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_32BITCOLOR;
-               break;
            default:
-               return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_16BITCOLOR;;
-               break;
+               return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_16BITCOLOR;
          }
-         break;
+     case 32:
+         return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_32BITCOLOR;
      case 64:
          return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_64BITCOLOR;
-         break;
      case 96:
-         return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_32BITCOLOR;
-         break;
+         MCPY_ASSERTMESSAGE("96 BitPerPixel support limimated as Linear format %d", dstFormat);
+         return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_96BITCOLOR_ONLYLINEARCASEISSUPPORTED;
      case 128:
          return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_128BITCOLOR;
-         break;
-     default:
-         return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_32BITCOLOR;
-         break;
-    }
- }
-
-uint32_t BltStateNext::GetFastCopyColorDepth(
-     GMM_RESOURCE_FORMAT dstFormat,
-     uint32_t            BytesPerTexel)
- {
-     uint32_t bitsPerTexel = BytesPerTexel * BLT_BITS_PER_BYTE;
-
-     switch (bitsPerTexel)
-     {
      case 8:
-         return mhw_blt_state::XY_FAST_COPY_BLT_CMD::COLOR_DEPTH_8BITCOLOR;
-         break;
-     case 16:
-         switch (dstFormat)
-         {
-         case GMM_FORMAT_B5G5R5A1_UNORM:
-             return mhw_blt_state::XY_FAST_COPY_BLT_CMD::COLOR_DEPTH_32BITCOLOR;
-             break;
-         default:
-             return mhw_blt_state::XY_FAST_COPY_BLT_CMD::COLOR_DEPTH_16BITCOLOR_565;
-             break;
-         }
-         break;
-     case 64:
-         return mhw_blt_state::XY_FAST_COPY_BLT_CMD::COLOR_DEPTH_64BITCOLOR_FOR64KBTILING;
-         break;
-     case 128:
-         return mhw_blt_state::XY_FAST_COPY_BLT_CMD::COLOR_DEPTH_128BITCOLOR_FOR64KBTILING;
-         break;
      default:
-         return mhw_blt_state::XY_FAST_COPY_BLT_CMD::COLOR_DEPTH_32BITCOLOR;
-         break;
-     }
+         return mhw_blt_state::XY_BLOCK_COPY_BLT_CMD::COLOR_DEPTH_8BITCOLOR;
+    }
  }
 
  int BltStateNext::GetBytesPerTexelScaling(MOS_FORMAT format)
 {
-  int  dstBytesPerTexel = 1;
-
+   int dstBytesPerTexel = 1;
    switch (format)
    {
         case Format_NV12:
@@ -1058,7 +975,6 @@ uint32_t BltStateNext::GetFastCopyColorDepth(
         case Format_P016:
             dstBytesPerTexel = 2;
            break;
-
        default:
            dstBytesPerTexel = 1;
     }
@@ -1068,14 +984,14 @@ uint32_t BltStateNext::GetFastCopyColorDepth(
 int BltStateNext::GetPlaneNum(MOS_FORMAT format)
 {
 
-  int  planeNum = 1;
+  int planeNum = SINGLE_PLANE;
 
    switch (format)
    {
        case Format_NV12:
        case Format_P010:
        case Format_P016:
-            planeNum = 2;
+           planeNum = TWO_PLANES;
            break;
        case Format_YV12:
        case Format_I420:
@@ -1086,11 +1002,67 @@ int BltStateNext::GetPlaneNum(MOS_FORMAT format)
        case Format_411P:
        case Format_422V:
        case Format_422H:
-            planeNum = 3;
+           planeNum = THREE_PLANES;
             break;
        default:
-            planeNum = 1;
+            planeNum = SINGLE_PLANE;
            break;
     }
    return planeNum;
  }
+
+MOS_STATUS BltStateNext::SetPrologParamsforCmdbuffer(PMOS_COMMAND_BUFFER cmdBuffer)
+{
+   PMOS_INTERFACE                  pOsInterface;
+   MOS_STATUS                      eStatus = MOS_STATUS_SUCCESS;
+   uint32_t                        iRemaining;
+   RENDERHAL_GENERIC_PROLOG_PARAMS GenericPrologParams = {};
+   PMOS_RESOURCE                   gpuStatusBuffer     = nullptr;
+
+   //---------------------------------------------
+   BLT_CHK_NULL_RETURN(cmdBuffer);
+   BLT_CHK_NULL_RETURN(m_osInterface);
+   //---------------------------------------------
+
+   eStatus      = MOS_STATUS_SUCCESS;
+   pOsInterface = m_osInterface;
+
+
+   MOS_GPU_CONTEXT gpuContext = m_osInterface->pfnGetGpuContext(m_osInterface);
+
+#ifndef EMUL
+   if (pOsInterface->bEnableKmdMediaFrameTracking)
+   {
+           // Get GPU Status buffer
+           BLT_CHK_STATUS_RETURN(pOsInterface->pfnGetGpuStatusBufferResource(pOsInterface, gpuStatusBuffer));
+           BLT_CHK_NULL_RETURN(gpuStatusBuffer);
+           // Register the buffer
+           BLT_CHK_STATUS_RETURN(pOsInterface->pfnRegisterResource(pOsInterface, gpuStatusBuffer, true, true));
+
+           GenericPrologParams.bEnableMediaFrameTracking      = true;
+           GenericPrologParams.presMediaFrameTrackingSurface  = gpuStatusBuffer;
+           GenericPrologParams.dwMediaFrameTrackingTag        = pOsInterface->pfnGetGpuStatusTag(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
+           GenericPrologParams.dwMediaFrameTrackingAddrOffset = pOsInterface->pfnGetGpuStatusTagOffset(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
+
+           // Increment GPU Status Tag
+           pOsInterface->pfnIncrementGpuStatusTag(pOsInterface, pOsInterface->CurrentGpuContextOrdinal);
+   }
+#endif
+
+   if (GenericPrologParams.bEnableMediaFrameTracking)
+   {
+           BLT_CHK_NULL_RETURN(GenericPrologParams.presMediaFrameTrackingSurface);
+           cmdBuffer->Attributes.bEnableMediaFrameTracking      = GenericPrologParams.bEnableMediaFrameTracking;
+           cmdBuffer->Attributes.dwMediaFrameTrackingTag        = GenericPrologParams.dwMediaFrameTrackingTag;
+           cmdBuffer->Attributes.dwMediaFrameTrackingAddrOffset = GenericPrologParams.dwMediaFrameTrackingAddrOffset;
+           cmdBuffer->Attributes.resMediaFrameTrackingSurface   = GenericPrologParams.presMediaFrameTrackingSurface;
+   }
+
+   return eStatus;
+}
+
+MOS_STATUS BltStateNext::SetBCSSWCTR(MOS_COMMAND_BUFFER *cmdBuffer)
+{
+   MOS_UNUSED(cmdBuffer);
+   return MOS_STATUS_SUCCESS;
+}

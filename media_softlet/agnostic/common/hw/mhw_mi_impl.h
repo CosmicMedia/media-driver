@@ -137,7 +137,7 @@ public:
         return formattedOpCode;
     }
 
-    MOS_STATUS SetWatchdogTimerThreshold(uint32_t frameWidth, uint32_t frameHeight, bool isEncoder) override
+    MOS_STATUS SetWatchdogTimerThreshold(uint32_t frameWidth, uint32_t frameHeight, bool isEncoder, uint32_t codecMode) override
     {
         return MOS_STATUS_SUCCESS;
     }
@@ -264,7 +264,7 @@ public:
     {
         m_cpInterface = cpInterface;
         MHW_CHK_NULL_RETURN(m_cpInterface);
-        m_cpInterface->RegisterMiInterfaceNext(m_miItf);
+        MHW_MI_CHK_STATUS(m_cpInterface->RegisterMiInterfaceNext(m_miItf));
         return MOS_STATUS_SUCCESS;
     }
 
@@ -305,6 +305,12 @@ public:
         }
 
         return eStatus;
+    }
+
+     virtual MOS_STATUS AddBLTMMIOPrologCmd(
+        PMOS_COMMAND_BUFFER cmdBuffer) override
+    { 
+        return MOS_STATUS_SUCCESS;
     }
 
 protected:
