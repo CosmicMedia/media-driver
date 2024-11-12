@@ -1,5 +1,5 @@
 ﻿/*
-* Copyright (c) 2019, Intel Corporation
+* Copyright (c) 2019-2024, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -55,6 +55,12 @@ GpuContextMgrNext::~GpuContextMgrNext()
         MosUtilities::MosDestroyMutex(m_gpuContextArrayMutex);
         m_gpuContextArrayMutex = nullptr;
     }
+
+    if (m_gpuContextDeleteArrayMutex)
+    {
+        MosUtilities::MosDestroyMutex(m_gpuContextDeleteArrayMutex);
+        m_gpuContextDeleteArrayMutex = nullptr;
+    }
 }
 
 MOS_STATUS GpuContextMgrNext::Initialize()
@@ -62,6 +68,9 @@ MOS_STATUS GpuContextMgrNext::Initialize()
     MOS_STATUS status = MOS_STATUS_SUCCESS;
     m_gpuContextArrayMutex = MosUtilities::MosCreateMutex();
     MOS_OS_CHK_NULL_RETURN(m_gpuContextArrayMutex);
+
+    m_gpuContextDeleteArrayMutex = MosUtilities::MosCreateMutex();
+    MOS_OS_CHK_NULL_RETURN(m_gpuContextDeleteArrayMutex);
 
     MosUtilities::MosLockMutex(m_gpuContextArrayMutex);
     m_gpuContextMap.clear();
@@ -220,8 +229,8 @@ GpuContextNext *GpuContextMgrNext::GetGpuContext(GPU_CONTEXT_HANDLE gpuContextHa
     }
     else
     {
-        MOS_OS_ASSERTMESSAGE("GPU context array is empty or got invalid index, something must be wrong!");
-        MT_ERR2(MT_MOS_GPUCXT_GET, MT_MOS_GPUCXT_MGR_PTR, (int64_t)this, MT_MOS_GPUCXT_HANDLE, gpuContextHandle);
+        MOS_OS_NORMALMESSAGE("Gpu context may have been deleted already!");
+        MT_LOG2(MT_MOS_GPUCXT_GET, MT_NORMAL, MT_MOS_GPUCXT_MGR_PTR, (int64_t)this, MT_MOS_GPUCXT_HANDLE, gpuContextHandle);
         gpuContext = nullptr;
     }
     MosUtilities::MosUnlockMutex(m_gpuContextArrayMutex);
@@ -266,7 +275,9 @@ void GpuContextMgrNext::DestroyGpuContext(GpuContextNext *gpuContext)
 
     if (found)
     {
+        MosUtilities::MosLockMutex(m_gpuContextDeleteArrayMutex);
         MOS_Delete(gpuContext);  // delete gpu context.
+        MosUtilities::MosUnlockMutex(m_gpuContextDeleteArrayMutex);
     }
     else
     {

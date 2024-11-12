@@ -410,52 +410,52 @@ MOS_STATUS VpUserFeatureControl::CreateUserSettingForDebug()
         m_ctrlValDefault.enableIFNCC = false;
     }
 
-    bool bEnableL03DLut = false;
+    bool bEnableOCL3DLut = false;
     eRegKeyReadStatus   = ReadUserSettingForDebug(
         m_userSettingPtr,
-        bEnableL03DLut,
-        __MEDIA_USER_FEATURE_VALUE_ENABLE_VP_L0_3DLUT,
+        bEnableOCL3DLut,
+        __MEDIA_USER_FEATURE_VALUE_ENABLE_VP_OCL_3DLUT,
         MediaUserSetting::Group::Sequence);
     if (MOS_SUCCEEDED(eRegKeyReadStatus))
     {
-        m_ctrlValDefault.bEnableL03DLut = bEnableL03DLut;
+        m_ctrlValDefault.enableOcl3DLut = bEnableOCL3DLut ? VP_CTRL_ENABLE : VP_CTRL_DISABLE;
     }
     else
     {
         // Default value
-        m_ctrlValDefault.bEnableL03DLut = false;
+        m_ctrlValDefault.enableOcl3DLut = VP_CTRL_DEFAULT;
     }
 
-    bool bForceL0FC   = false;
+    bool bForceOclFC   = false;
     eRegKeyReadStatus = ReadUserSettingForDebug(
         m_userSettingPtr,
-        bForceL0FC,
-        __MEDIA_USER_FEATURE_VALUE_ENABLE_VP_L0_FC,
+        bForceOclFC,
+        __MEDIA_USER_FEATURE_VALUE_ENABLE_VP_OCL_FC,
         MediaUserSetting::Group::Sequence);
     if (MOS_SUCCEEDED(eRegKeyReadStatus))
     {
-        m_ctrlValDefault.bForceL0FC = bForceL0FC;
+        m_ctrlValDefault.forceOclFC = bForceOclFC ? VP_CTRL_ENABLE : VP_CTRL_DISABLE;
     }
     else
     {
         // Default value
-        m_ctrlValDefault.bForceL0FC = false;
+        m_ctrlValDefault.forceOclFC = VP_CTRL_DEFAULT;
     }
 
-    bool bDisableL0FcFp = false;
+    bool bDisableOclFcFp = false;
     eRegKeyReadStatus   = ReadUserSettingForDebug(
         m_userSettingPtr,
-        bDisableL0FcFp,
-        __MEDIA_USER_FEATURE_VALUE_DISABLE_VP_L0_FC_FP,
+        bDisableOclFcFp,
+        __MEDIA_USER_FEATURE_VALUE_DISABLE_VP_OCL_FC_FP,
         MediaUserSetting::Group::Sequence);
     if (MOS_SUCCEEDED(eRegKeyReadStatus))
     {
-        m_ctrlValDefault.bDisableL0FcFp = bDisableL0FcFp;
+        m_ctrlValDefault.bDisableOclFcFp = bDisableOclFcFp;
     }
     else
     {
         // Default value
-        m_ctrlValDefault.bDisableL0FcFp = false;
+        m_ctrlValDefault.bDisableOclFcFp = false;
     }
 #endif
 #if (_DEBUG || _RELEASE_INTERNAL)
@@ -507,11 +507,40 @@ PMOS_OCA_LOG_USER_FEATURE_CONTROL_INFO VpUserFeatureControl::GetOcaFeautreContro
 }
 
 
-bool VpUserFeatureControl::EnableL0FC()
+bool VpUserFeatureControl::EnableOclFC()
 {
-    bool bEnableL0FC = (m_vpPlatformInterface && m_vpPlatformInterface->SupportL0FC());
-#if (_DEBUG || _RELEASE_INTERNAL)
-    bEnableL0FC |= m_ctrlVal.bForceL0FC;
-#endif
-    return bEnableL0FC;
+    bool bEnableOclFC = false;
+    if (m_ctrlVal.forceOclFC == VP_CTRL_ENABLE)
+    {
+        bEnableOclFC = true;
+    }
+    else if (m_ctrlVal.forceOclFC == VP_CTRL_DISABLE)
+    {
+        bEnableOclFC = false;
+    }
+    else // if (m_ctrlVal.forceOclFC == VP_CTRL_DEFAULT)
+    {
+        bEnableOclFC = (m_vpPlatformInterface && m_vpPlatformInterface->IsOclKernelEnabled());
+    }
+    VP_PUBLIC_NORMALMESSAGE("EnableOclFC set as %d", bEnableOclFC);
+    return bEnableOclFC;
+}
+
+bool VpUserFeatureControl::EnableOcl3DLut()
+{
+    bool bEnableOcl3DLut = false;
+    if (m_ctrlVal.enableOcl3DLut == VP_CTRL_ENABLE)
+    {
+        bEnableOcl3DLut = true;
+    }
+    else if (m_ctrlVal.enableOcl3DLut == VP_CTRL_DISABLE)
+    {
+        bEnableOcl3DLut = false;
+    }
+    else // if (m_ctrlVal.enableOcl3DLut == VP_CTRL_DEFAULT)
+    {
+        bEnableOcl3DLut = (m_vpPlatformInterface && m_vpPlatformInterface->IsOclKernelEnabled());
+    }
+    VP_PUBLIC_NORMALMESSAGE("EnableOcl3DLut set as %d", bEnableOcl3DLut);
+    return bEnableOcl3DLut;
 }

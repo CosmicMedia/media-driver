@@ -60,10 +60,11 @@ public:
         uint32_t enabledSFCNv12P010LinearOutput = 0;
         uint32_t enabledSFCRGBPRGB24Output  = 0;
         bool     enableIFNCC                    = false;
-        bool     bEnableL03DLut                 = false;
-        bool     bForceL0FC                     = false;
-        bool     bDisableL0FcFp                 = false;
 #endif
+        VP_CTRL enableOcl3DLut              = VP_CTRL_DEFAULT;
+        VP_CTRL forceOclFC                  = VP_CTRL_DEFAULT;
+        bool    bDisableOclFcFp             = false;
+
         bool disablePacketReuse             = false;
         bool enablePacketReuseTeamsAlways   = false;
 
@@ -108,14 +109,9 @@ public:
         return m_ctrlVal.enableIFNCC;
     }
 
-    bool EnableL03DLut()
+    bool DisableOclFcFp()
     {
-        return m_ctrlVal.bEnableL03DLut;
-    }
-
-    bool DisableL0FcFp()
-    {
-        return m_ctrlVal.bDisableL0FcFp;
+        return m_ctrlVal.bDisableOclFcFp;
     }
 #endif
 
@@ -128,7 +124,9 @@ public:
 
     virtual MOS_STATUS Update(PVP_PIPELINE_PARAMS params);
 
-    bool EnableL0FC();
+    bool EnableOclFC();
+
+    bool EnableOcl3DLut();
 
     bool IsVeboxOutputSurfEnabled()
     {

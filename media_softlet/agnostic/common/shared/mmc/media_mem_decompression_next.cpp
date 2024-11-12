@@ -286,9 +286,9 @@ MOS_STATUS MediaMemDeCompNext::MediaMemoryCopy(PMOS_RESOURCE inputResource, PMOS
     TRACEDATA_MEDIACOPY_INIT(
         eventData,
         inputResource->AllocationInfo.m_AllocationHandle,
-        targetSurface.dwWidth,
-        targetSurface.dwHeight,
-        targetSurface.Format,
+        sourceSurface.dwWidth,
+        sourceSurface.dwHeight,
+        sourceSurface.Format,
         *((int64_t *)&inputResource->pGmmResInfo->GetResFlags().Gpu),
         *((int64_t *)&inputResource->pGmmResInfo->GetResFlags().Info),
         inputResource->pGmmResInfo->GetSetCpSurfTag(0, 0),
@@ -304,7 +304,7 @@ MOS_STATUS MediaMemDeCompNext::MediaMemoryCopy(PMOS_RESOURCE inputResource, PMOS
     MOS_TraceEventExt(EVENT_MEDIA_COPY, EVENT_TYPE_INFO, &eventData, sizeof(eventData), nullptr, 0);
 #endif
 
-    VPHAL_MEMORY_DECOMP_CHK_STATUS_RETURN(RenderDoubleBufferDecompCMD(&targetSurface, &targetSurface));
+    VPHAL_MEMORY_DECOMP_CHK_STATUS_RETURN(RenderDoubleBufferDecompCMD(&sourceSurface, &targetSurface));
 
     MOS_TraceEventExt(EVENT_MEDIA_COPY, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
     return eStatus;
