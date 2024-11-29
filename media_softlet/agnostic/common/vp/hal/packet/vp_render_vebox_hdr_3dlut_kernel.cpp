@@ -389,14 +389,8 @@ MOS_STATUS VpRenderHdr3DLutKernel::InitCoefSurface(const uint32_t maxDLL, const 
     {
         CalcCCMMatrix();
         MOS_SecureMemcpy(ccmMatrix, sizeof(float) * 12, color_matrix_calculation, sizeof(float) * 12);
-        if (maxDLL > 800)
-        {
-            tmMode = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2H;
-        }
-        else
-        {
-            tmMode = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2S;
-        }
+
+        tmMode    = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2S;
         oetfCurve = (OETF_CURVE_TYPE)OETF_SRGB;
         tmSrcType = (TONE_MAPPING_SOURCE_TYPE)TONE_MAPPING_SOURCE_PSEUDO_Y_BT709;
     }
@@ -430,6 +424,18 @@ MOS_STATUS VpRenderHdr3DLutKernel::InitCoefSurface(const uint32_t maxDLL, const 
     //Unlock
     VP_RENDER_CHK_STATUS_RETURN(m_allocator->UnLock(&surf->osSurface->OsResource));
 
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpRenderHdr3DLutKernel::SetPerfTag()
+{
+    VP_FUNC_CALL();
+    VP_RENDER_CHK_NULL_RETURN(m_hwInterface);
+    auto osInterface = m_hwInterface->m_osInterface;
+    VP_RENDER_CHK_NULL_RETURN(osInterface);
+    VP_RENDER_CHK_NULL_RETURN(osInterface->pfnSetPerfTag);
+
+    osInterface->pfnSetPerfTag(osInterface, VPHAL_EU3DLUT);
     return MOS_STATUS_SUCCESS;
 }
 
@@ -640,5 +646,17 @@ MOS_STATUS VpRenderHdr3DLutKernelCM::SetKernelConfigs(KERNEL_CONFIGS& kernelConf
             m_maxDisplayLum, m_maxContentLevelLum, m_hdrMode);
     }
 
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS VpRenderHdr3DLutKernelCM::SetPerfTag()
+{
+    VP_FUNC_CALL();
+    VP_RENDER_CHK_NULL_RETURN(m_hwInterface);
+    auto osInterface = m_hwInterface->m_osInterface;
+    VP_RENDER_CHK_NULL_RETURN(osInterface);
+    VP_RENDER_CHK_NULL_RETURN(osInterface->pfnSetPerfTag);
+
+    osInterface->pfnSetPerfTag(osInterface, VPHAL_EU3DLUT);
     return MOS_STATUS_SUCCESS;
 }
