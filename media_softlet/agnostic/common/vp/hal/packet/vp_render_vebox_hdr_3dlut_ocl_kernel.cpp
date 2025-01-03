@@ -285,8 +285,8 @@ MOS_STATUS VpRenderHdr3DLutOclKernel::SetupStatelessBuffer()
 {
     VP_FUNC_CALL();
     m_statelessArray.clear();
-    VP_RENDER_CHK_STATUS_RETURN(SetupStatelessBufferResource(SurfaceType3DLutCoef));
-    VP_RENDER_CHK_STATUS_RETURN(SetupStatelessBufferResource(SurfaceType3DLut));
+    VP_RENDER_CHK_STATUS_RETURN(SetupStatelessBufferResource(SurfaceType3DLutCoef, false));
+    VP_RENDER_CHK_STATUS_RETURN(SetupStatelessBufferResource(SurfaceType3DLut, true));
     return MOS_STATUS_SUCCESS;
 }
 
@@ -453,7 +453,15 @@ MOS_STATUS VpRenderHdr3DLutOclKernel::InitCoefSurface(const uint32_t maxDLL, con
         CalcCCMMatrix();
         MOS_SecureMemcpy(ccmMatrix, sizeof(float) * 12, color_matrix_calculation, sizeof(float) * 12);
 
-        tmMode    = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2S;
+        if (maxDLL > 800)
+        {
+            tmMode = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2E;
+        }
+        else
+        {
+            tmMode = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2S;
+        }
+
         oetfCurve = (OETF_CURVE_TYPE)OETF_SRGB;
         tmSrcType = (TONE_MAPPING_SOURCE_TYPE)TONE_MAPPING_SOURCE_PSEUDO_Y_BT709;
     }

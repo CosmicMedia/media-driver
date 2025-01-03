@@ -390,7 +390,16 @@ MOS_STATUS VpRenderHdr3DLutKernel::InitCoefSurface(const uint32_t maxDLL, const 
         CalcCCMMatrix();
         MOS_SecureMemcpy(ccmMatrix, sizeof(float) * 12, color_matrix_calculation, sizeof(float) * 12);
 
-        tmMode    = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2S;
+        if (maxDLL > 800)
+        {
+            tmMode = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2E;
+            VP_RENDER_NORMALMESSAGE("Change curve to H2E, maxDLL %d", maxDLL);
+        }
+        else
+        {
+            tmMode = (TONE_MAPPING_MODE)TONE_MAPPING_MODE_H2S;
+        }
+
         oetfCurve = (OETF_CURVE_TYPE)OETF_SRGB;
         tmSrcType = (TONE_MAPPING_SOURCE_TYPE)TONE_MAPPING_SOURCE_PSEUDO_Y_BT709;
     }
@@ -456,7 +465,7 @@ MOS_STATUS VpRenderHdr3DLutKernelCM::Init(VpRenderKernel &kernel)
 {
     VP_FUNC_CALL();
     m_kernelSize = kernel.GetKernelSize() + KERNEL_BINARY_PADDING_SIZE;
-
+    m_kernelPaddingSize = KERNEL_BINARY_PADDING_SIZE;
     uint8_t *pKernelBin = (uint8_t *)kernel.GetKernelBinPointer();
     VP_RENDER_CHK_NULL_RETURN(pKernelBin);
 
